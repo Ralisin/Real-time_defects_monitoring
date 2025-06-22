@@ -7,63 +7,63 @@ from sklearn.cluster import DBSCAN
 from PIL import Image
 import io
 
-# Configurazione del sistema di logging per tracciare le operazioni
+# Configure the logging system to track operations
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("demo_client")
 
 
 def main():
     """
-    Funzione principale che gestisce il flusso di lavoro del client demo.
-    Il client si connette a un server, crea un benchmark, elabora batch di immagini
-    e invia i risultati dell'analisi.
+    Main function that handles the demo client workflow.
+    The client connects to a server, creates a benchmark, processes image batches,
+    and sends the analysis results.
     """
-    # Parsing degli argomenti da linea di comando
+    # Parse command-line arguments
     parser = argparse.ArgumentParser(description="Demo Client")
-    parser.add_argument("endpoint", type=str, help="URL dell'endpoint del server")
-    parser.add_argument("--limit", type=int, default=None, help="Numero massimo di batch da elaborare")
+    parser.add_argument("endpoint", type=str, help="URL of the server endpoint")
+    parser.add_argument("--limit", type=int, default=None, help="Maximum number of batches to process")
     args = parser.parse_args()
 
     url = args.endpoint
     limit = args.limit
-    session = requests.Session()  # Sessione HTTP per mantenere la connessione
+    session = requests.Session()  # HTTP session to maintain connection
 
     logger.info("Starting demo client")
 
-    # CREAZIONE DEL BENCHMARK
-    # Crea un nuovo benchmark sul server con configurazioni specifiche
+    # BENCHMARK CREATION
+    # Create a new benchmark on the server with specific configurations
     create_response = session.post(
         f"{url}/api/create",
         json={"apitoken": "polimi-deib", "name": "unoptimized", "test": True, "max_batches": limit},
     )
     create_response.raise_for_status()
-    bench_id = create_response.json()  # Ottiene l'ID del benchmark creato
+    bench_id = create_response.json()  # Get the ID of the created benchmark
     logger.info(f"Created bench {bench_id}")
 
-    # AVVIO DEL BENCHMARK
+    # START BENCHMARK
     start_response = session.post(f"{url}/api/start/{bench_id}")
     assert start_response.status_code == 200
     logger.info(f"Started bench {bench_id}")
 
-    # CICLO DI ELABORAZIONE DEI BATCH
+    # BATCH PROCESSING LOOP
     i = 0
-    while not limit or i < limit:  # Continua finché non raggiunge il limite o non ci sono più batch
+    while not limit or i < limit:  # Continue until reaching the limit or no more batches are available
         logger.info(f"Getting batch {i}")
 
-        # Richiede il prossimo batch di dati dal server
+        # Request the next batch of data from the server
         next_batch_response = session.get(f"{url}/api/next_batch/{bench_id}")
         if next_batch_response.status_code == 404:
-            break  # Non ci sono più batch disponibili
+            break  # No more batches available
         next_batch_response.raise_for_status()
 
-        # ELABORAZIONE DEL BATCH
-        # Deserializza i dati del batch usando umsgpack
+        # BATCH PROCESSING
+        # Deserialize the batch data using umsgpack
         batch_input = umsgpack.unpackb(next_batch_response.content)
-        result = process(batch_input)  # Elabora il batch (funzione definita sotto)
+        result = process(batch_input)  # Process the batch (function defined below)
 
-        # INVIO DEL RISULTATO
+        # SEND RESULT
         logger.info(f"Sending batch result {i}")
-        result_serialized = umsgpack.packb(result)  # Serializza il risultato
+        result_serialized = umsgpack.packb(result)  # Serialize the result
         result_response = session.post(
             f"{url}/api/result/0/{bench_id}/{i}",
             data=result_serialized
@@ -72,7 +72,7 @@ def main():
         print(result_response.content)
         i += 1
 
-    # CHIUSURA DEL BENCHMARK
+    # END BENCHMARK
     end_response = session.post(f"{url}/api/end/{bench_id}")
     end_response.raise_for_status()
     result = end_response.text
@@ -83,26 +83,26 @@ def main():
 
 def compute_outliers(image3d, empty_threshold, saturation_threshold, distance_threshold, outlier_threshold):
     """
-    Calcola gli outliers (anomalie) in un'immagine 3D confrontando ogni pixel
-    con i suoi vicini più prossimi e più lontani.
+    Computes outliers (anomalies) in a 3D image by comparing each pixel
+    with its nearest and farthest neighbors.
 
     Args:
-        image3d: Array 3D numpy (depth, width, height) rappresentante l'immagine
-        empty_threshold: Soglia sotto la quale un pixel è considerato "vuoto"
-        saturation_threshold: Soglia sopra la quale un pixel è considerato "saturo"
-        distance_threshold: Raggio per definire i vicini "vicini"
-        outlier_threshold: Soglia per considerare un pixel come outlier
+        image3d: 3D numpy array (depth, width, height) representing the image
+        empty_threshold: Threshold below which a pixel is considered "empty"
+        saturation_threshold: Threshold above which a pixel is considered "saturated"
+        distance_threshold: Radius to define "close" neighbors
+        outlier_threshold: Threshold to consider a pixel as outlier
 
     Returns:
-        Lista di outliers nel formato (x, y, deviazione)
+        List of outliers in the format (x, y, deviation)
     """
     image3d = image3d.astype(np.float64)
     depth, width, height = image3d.shape
 
     def get_padded(image, d, x, y, pad=0.0):
         """
-        Funzione helper per ottenere un valore dall'immagine con padding.
-        Restituisce il valore di padding se le coordinate sono fuori dai limiti.
+        Helper function to get a value from the image with padding.
+        Returns the padding value if coordinates are out of bounds.
         """
         if d < 0 or d >= image.shape[0]:
             return pad
@@ -114,30 +114,29 @@ def compute_outliers(image3d, empty_threshold, saturation_threshold, distance_th
 
     outliers = []
 
-    # SCANSIONE DI OGNI PIXEL DELL'ULTIMO LAYER
+    # SCAN EVERY PIXEL OF THE LAST LAYER
     for y in range(height):
         for x in range(width):
-            # Salta pixel vuoti o saturi nell'ultimo layer
+            # Skip empty or saturated pixels in the last layer
             if image3d[-1, x, y] <= empty_threshold or image3d[-1, x, y] >= saturation_threshold:
                 continue
 
-            # CALCOLO MEDIA DEI VICINI VICINI
-            # Considera tutti i pixel entro distance_threshold usando distanza Manhattan
-            cn_sum = 0  # Somma dei vicini vicini
-            cn_count = 0  # Conteggio dei vicini vicini
+            # CALCULATE MEAN OF NEAR NEIGHBORS
+            # Consider all pixels within distance_threshold using Manhattan distance
+            cn_sum = 0  # Sum of close neighbors
+            cn_count = 0  # Count of close neighbors
             for j in range(-distance_threshold, distance_threshold + 1):
                 for i in range(-distance_threshold, distance_threshold + 1):
                     for d in range(depth):
-                        # Distanza Manhattan 3D
                         distance = abs(i) + abs(j) + abs(depth - 1 - d)
                         if distance <= distance_threshold:
                             cn_sum += get_padded(image3d, d, x + i, y + j)
                             cn_count += 1
 
-            # CALCOLO MEDIA DEI VICINI LONTANI
-            # Considera pixel tra distance_threshold e 2*distance_threshold
-            on_sum = 0  # Somma dei vicini lontani
-            on_count = 0  # Conteggio dei vicini lontani
+            # CALCULATE MEAN OF FAR NEIGHBORS
+            # Consider pixels between distance_threshold and 2*distance_threshold
+            on_sum = 0  # Sum of far neighbors
+            on_count = 0  # Count of far neighbors
             for j in range(-2 * distance_threshold, 2 * distance_threshold + 1):
                 for i in range(-2 * distance_threshold, 2 * distance_threshold + 1):
                     for d in range(depth):
@@ -146,13 +145,13 @@ def compute_outliers(image3d, empty_threshold, saturation_threshold, distance_th
                             on_sum += get_padded(image3d, d, x + i, y + j)
                             on_count += 1
 
-            # CONFRONTO DELLE MEDIE
-            close_mean = cn_sum / cn_count  # Media dei vicini vicini
-            outer_mean = on_sum / on_count  # Media dei vicini lontani
-            dev = abs(close_mean - outer_mean)  # Deviazione assoluta
+            # COMPARE MEANS
+            close_mean = cn_sum / cn_count
+            outer_mean = on_sum / on_count
+            dev = abs(close_mean - outer_mean)
 
-            # IDENTIFICAZIONE OUTLIERS
-            # Un pixel è outlier se la deviazione supera la soglia
+            # IDENTIFY OUTLIERS
+            # A pixel is an outlier if the deviation exceeds the threshold
             if image3d[-1, x, y] > empty_threshold and image3d[
                 -1, x, y] < saturation_threshold and dev > outlier_threshold:
                 outliers.append((x, y, dev))
@@ -162,120 +161,120 @@ def compute_outliers(image3d, empty_threshold, saturation_threshold, distance_th
 
 def cluster_outliers_2d(outliers, eps=20, min_samples=5):
     """
-    Raggruppa gli outliers in cluster usando l'algoritmo DBSCAN.
-    Calcola i centroidi di ogni cluster per identificare aree problematiche.
+    Groups outliers into clusters using the DBSCAN algorithm.
+    Computes the centroid of each cluster to identify problematic areas.
 
     Args:
-        outliers: Lista di outliers nel formato (x, y, deviazione)
-        eps: Distanza massima tra punti nello stesso cluster
-        min_samples: Numero minimo di punti per formare un cluster
+        outliers: List of outliers in the format (x, y, deviation)
+        eps: Maximum distance between points in the same cluster
+        min_samples: Minimum number of points to form a cluster
 
     Returns:
-        Lista di centroidi con coordinate e dimensione del cluster
+        List of centroids with coordinates and cluster size
     """
     if len(outliers) == 0:
         return []
 
-    # Estrae solo le coordinate 2D (x, y) per il clustering
+    # Extract only 2D coordinates (x, y) for clustering
     positions = np.array([(outlier[0], outlier[1]) for outlier in outliers])
 
-    # Applica l'algoritmo DBSCAN per il clustering
+    # Apply DBSCAN clustering algorithm
     clustering = DBSCAN(eps=eps, min_samples=min_samples).fit(positions)
-    labels = clustering.labels_  # Etichette dei cluster (-1 = rumore)
+    labels = clustering.labels_  # Cluster labels (-1 = noise)
 
-    # CALCOLO DEI CENTROIDI
+    # CALCULATE CENTROIDS
     centroids = []
     for label in set(labels):
         if label == -1:
-            continue  # Salta i punti di rumore
+            continue  # Skip noise points
 
-        # Ottiene tutti i punti del cluster corrente
+        # Get all points in the current cluster
         cluster_points = positions[labels == label]
 
-        # Calcola il centroide come media delle coordinate
+        # Compute centroid as mean of coordinates
         centroid = cluster_points.mean(axis=0)
         centroids.append({
             'x': centroid[0],
             'y': centroid[1],
-            'count': len(cluster_points)  # Dimensione del cluster
+            'count': len(cluster_points)  # Cluster size
         })
 
     return centroids
 
 
-# MAPPA GLOBALE PER MEMORIZZARE LE FINESTRE SCORREVOLI
-# Ogni tile mantiene una finestra di 3 immagini consecutive
+# GLOBAL MAP TO STORE SLIDING WINDOWS
+# Each tile keeps a window of 3 consecutive images
 tile_map = dict()
 
 
 def process(batch):
     """
-    Elabora un singolo batch di dati contenente un'immagine di un layer.
-    Mantiene una finestra scorrevole di 3 layer per ogni tile e analizza
-    gli outliers quando la finestra è completa.
+    Processes a single batch of data containing one image layer.
+    Maintains a sliding window of 3 layers per tile and analyzes
+    outliers when the window is full.
 
     Args:
-        batch: Dizionario contenente i dati del batch (print_id, tile_id, layer, immagine)
+        batch: Dictionary containing batch data (print_id, tile_id, layer, image)
 
     Returns:
-        Dizionario con i risultati dell'analisi (pixel saturi, centroidi degli outliers)
+        Dictionary with the analysis results (saturated pixels, outlier centroids)
     """
-    # PARAMETRI DI CONFIGURAZIONE
-    EMPTY_THRESH = 5000  # Soglia per pixel vuoti
-    SATURATION_THRESH = 65000  # Soglia per pixel saturi
-    DISTANCE_FACTOR = 2  # Raggio per i vicini nell'analisi outliers
-    OUTLIER_THRESH = 6000  # Soglia per identificare outliers
-    DBSCAN_EPS = 20  # Parametro eps per DBSCAN
-    DBSCAN_MIN = 5  # Numero minimo di campioni per DBSCAN
+    # CONFIGURATION PARAMETERS
+    EMPTY_THRESH = 5000
+    SATURATION_THRESH = 65000
+    DISTANCE_FACTOR = 2
+    OUTLIER_THRESH = 6000
+    DBSCAN_EPS = 20
+    DBSCAN_MIN = 5
 
-    # Estrazione dei dati dal batch
+    # Extract data from batch
     print_id = batch["print_id"]
     tile_id = batch["tile_id"]
     batch_id = batch["batch_id"]
     layer = batch["layer"]
-    image = Image.open(io.BytesIO(batch["tif"]))  # Carica l'immagine TIF da bytes
+    image = Image.open(io.BytesIO(batch["tif"]))  # Load TIF image from bytes
 
     logger.info(f"Processing layer {layer} of print {print_id}, tile {tile_id}")
 
-    # GESTIONE DELLA FINESTRA SCORREVOLE
-    # Inizializza la finestra per questo tile se non esiste
+    # SLIDING WINDOW MANAGEMENT
+    # Initialize the window for this tile if it doesn't exist
     if not (print_id, tile_id) in tile_map:
         tile_map[(print_id, tile_id)] = []
 
     window = tile_map[(print_id, tile_id)]
 
-    # Mantiene solo le ultime 3 immagini (finestra scorrevole)
+    # Keep only the last 3 images (sliding window)
     if len(window) == 3:
-        window.pop(0)  # Rimuove l'immagine più vecchia
+        window.pop(0)  # Remove oldest image
 
-    window.append(image)  # Aggiunge la nuova immagine
+    window.append(image)  # Add new image
 
-    # CONTEGGIO PIXEL SATURI
-    # Conta quanti pixel superano la soglia di saturazione
+    # COUNT SATURATED PIXELS
+    # Count how many pixels exceed the saturation threshold
     saturated = np.count_nonzero(np.array(image) > SATURATION_THRESH)
 
-    # ANALISI DEGLI OUTLIERS
+    # OUTLIER ANALYSIS
     centroids = []
-    if len(window) == 3:  # Procede solo quando ha 3 layer consecutivi
-        # Crea una matrice 3D impilando i 3 layer
+    if len(window) == 3:  # Proceed only when 3 consecutive layers are available
+        # Create 3D matrix by stacking 3 layers
         image3d = np.stack(window, axis=0)
 
-        # Calcola gli outliers confrontando ogni pixel con i suoi vicini
+        # Compute outliers by comparing each pixel to its neighbors
         outliers = compute_outliers(image3d, EMPTY_THRESH, SATURATION_THRESH, DISTANCE_FACTOR, OUTLIER_THRESH)
 
-        # Raggruppa gli outliers in cluster e calcola i centroidi
+        # Cluster outliers and compute centroids
         centroids = cluster_outliers_2d(outliers, DBSCAN_EPS, DBSCAN_MIN)
 
-        # Opzionale: ordina i centroidi per dimensione del cluster
+        # Optionally: sort centroids by cluster size
         # centroids = sorted(centroids, key=lambda x: -x['count'])
 
-    # PREPARAZIONE DEL RISULTATO
+    # PREPARE RESULT
     result = {
         "batch_id": batch_id,
         "print_id": print_id,
         "tile_id": tile_id,
-        "saturated": saturated,  # Numero di pixel saturi
-        "centroids": centroids  # Centroidi dei cluster di outliers
+        "saturated": saturated,  # Number of saturated pixels
+        "centroids": centroids  # Centroids of outlier clusters
     }
 
     print(result)
