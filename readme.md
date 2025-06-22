@@ -1,4 +1,4 @@
-# real-time monitoring of defects in Laser Powder Bed Fusion
+# Real-time monitoring of defects in Laser Powder Bed Fusion
 
 ## Architecture
 

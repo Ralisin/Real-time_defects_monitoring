@@ -1,0 +1,5 @@
+.idea
+.venv
+
+/local-challenger/data
+/local-challenger/gc25cdocker.tar
