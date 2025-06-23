@@ -17,3 +17,7 @@ After setup, to load docker image and start server, the following commands must 
 ```bash
   docker run -p 8866:8866 -v ./data:/data micro-challenger:latest 0.0.0.0:8866 /data
 ```
+
+## Server info
+
+Inside there are _3600_ batches
