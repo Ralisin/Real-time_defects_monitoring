@@ -13,7 +13,7 @@ services:
       - KAFKA_CFG_LISTENERS=PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
       - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
       - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=true
-      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=1@localhost:9093
+      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
       - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
       - KAFKA_CFG_OFFSETS_TOPIC_REPLICATION_FACTOR=1
       - ALLOW_PLAINTEXT_LISTENER=yes
@@ -23,20 +23,33 @@ services:
       - flink-network
 
   flink-jobmanager:
-    image: flink:1.17.1-scala_2.12
+    build:
+      context: ./flink-python
+      dockerfile: Dockerfile
+    image: custom-flink:latest
     container_name: flink-jobmanager
     command: jobmanager
     ports:
       - "8081:8081"
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - FLINK_PROPERTIES=jobmanager.rpc.address:flink-jobmanager
     networks:
       - flink-network
 
   flink-taskmanager:
-    image: flink:1.17.1-scala_2.12
+    image: custom-flink:latest
     container_name: flink-taskmanager
     depends_on:
       - flink-jobmanager
     command: taskmanager
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address:flink-jobmanager
+        taskmanager.numberOfTaskSlots: 4
+#      - FLINK_PROPERTIES=jobmanager.rpc.address:flink-jobmanager
     networks:
       - flink-network
 
@@ -44,6 +57,7 @@ services:
     build:
       context: ./middleware
       dockerfile: Dockerfile
+    image: middleware:latest
     container_name: middleware
     depends_on:
       - kafka
