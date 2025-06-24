@@ -40,7 +40,7 @@ services:
     networks:
       - flink-network
 
-  python-middleware:
+  middleware:
     build:
       context: ./middleware
       dockerfile: Dockerfile
@@ -53,7 +53,8 @@ services:
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
       - CHALLENGER_URL=http://local-challenger:8866
-      - VERBOSE=1 # Add more prints to
+      - VERBOSE=1 # Add more middleware logs, but increase middleware job weight
+#      - INTERVAL=2 # Time through every new message in 'raw-batch' topic
 #      - LIMIT=20 # A limit can be set via environment
     networks:
       - flink-network

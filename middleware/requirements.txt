@@ -1,2 +1,3 @@
 requests~=2.32.4
 kafka-python~=2.2.13
+umsgpack~=0.1.0

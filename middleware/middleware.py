@@ -9,6 +9,7 @@ import umsgpack
 import threading
 import time
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 get_count = 0
@@ -41,18 +42,23 @@ def poll_batches(server_url, bench_id, kafka_bootstrap="kafka:9092", topic="raw-
 
             response.raise_for_status()
 
+            response_content = response.content
+
             if verbose:
-                batch = umsgpack.unpackb(response.content)
+                batch = umsgpack.unpackb(response_content)
 
                 print_id = batch["print_id"]
                 tile_id = batch["tile_id"]
                 batch_id = batch["batch_id"]
                 layer = batch["layer"]
 
-                logger.debug(f"[BATCH {batch_id}] Received from server | print={print_id} | layer={layer} | tile={tile_id}")
+                print(" B")
 
-            logger.info(f"Received next batch from server.")
-            producer.send(topic, response.content)
+                logger.info(f"[BATCH {batch_id}] Received from server | print={print_id} | layer={layer} | tile={tile_id}")
+            else:
+                logger.info(f"Received next batch from server.")
+
+            producer.send(topic, response_content)
             logger.info(f"Sent batch to Kafka topic '{topic}'")
 
             # The solution here describe a possible strategy for middleware messages, but is not practical.
@@ -154,19 +160,19 @@ def main():
     env_server_url = os.getenv("CHALLENGER_URL")
     env_kafka_url = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
     env_limit =  int(os.getenv("LIMIT")) if os.getenv("LIMIT") is not None and os.getenv("LIMIT").isdigit() else None
+    env_interval =  int(os.getenv("INTERVAL")) if os.getenv("INTERVAL") is not None and os.getenv("INTERVAL").isdigit() else 2
     env_verbose = os.getenv("VERBOSE", "false").lower() in ("1", "true", "yes")
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--server-url", default=env_server_url, help="Local Challenger URL")
     parser.add_argument("--kafka", default=env_kafka_url, help="Kafka bootstrap server")
     parser.add_argument("--limit", type=int, default=env_limit, help="Max number of batches (optional)")
+    parser.add_argument("--interval", type=int, default=env_interval, help="Interval between checks (optional)")
     parser.add_argument("--verbose", action="store_true", default=env_verbose, help="Enable verbose (debug) logging")
     args = parser.parse_args()
 
     if not args.server_url:
         parser.error("Missing --server-url and no CHALLENGER_URL environment variable provided.")
-
-    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
 
     # Trap SIGINT and SIGTERM for graceful shutdown
     signal.signal(signal.SIGINT, handle_shutdown)
@@ -176,7 +182,7 @@ def main():
     bench_id = create_and_start_benchmark(args.server_url, limit=args.limit)
 
     # Step 2: Start threads
-    batch_thread = threading.Thread(target=poll_batches, args=(args.server_url, bench_id, args.kafka, args.verbose))
+    batch_thread = threading.Thread(target=poll_batches, args=(args.server_url, bench_id, args.kafka), kwargs={"interval": args.interval, "verbose": args.verbose})
     kafka_thread = threading.Thread(target=consume_results, args=(args.kafka, args.server_url))
     watcher_thread = threading.Thread(target=watch_and_end, args=(args.server_url, bench_id))
 
