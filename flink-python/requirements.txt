@@ -1,0 +1,4 @@
+apache-flink==2.0.0
+kafka-python~=2.2.13
+umsgpack~=0.1.0
+pillow~=11.2.1

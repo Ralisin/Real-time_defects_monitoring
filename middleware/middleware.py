@@ -20,7 +20,8 @@ counter_lock = threading.Lock()
 stop_event = threading.Event()
 
 def poll_batches(server_url, bench_id, kafka_bootstrap="kafka:9092", topic="raw-batch", interval=2, verbose=False):
-    print("poll_batches called")  # Debug
+    logger = logging.getLogger("poll_batches")
+
     global get_count, no_more_batches
 
     session = requests.Session()
@@ -58,10 +59,11 @@ def poll_batches(server_url, bench_id, kafka_bootstrap="kafka:9092", topic="raw-
             else:
                 logger.info(f"Received next batch from server.")
 
+            # Here we encode response_content as a string to simplify in a Flink job retrieving this message
             producer.send(topic, response_content)
             logger.info(f"Sent batch to Kafka topic '{topic}'")
 
-            # The solution here describe a possible strategy for middleware messages, but is not practical.
+            # The solution here describes a possible strategy for middleware messages but is not practical.
             # To keep middleware light way, it was preferred to send response.content directly,
             # without any deserialization and serialization in some other format
             #
@@ -85,6 +87,8 @@ def poll_batches(server_url, bench_id, kafka_bootstrap="kafka:9092", topic="raw-
 
 
 def consume_results(kafka_bootstrap="kafka:9092", server_url=None, topic="results"):
+    logger = logging.getLogger("consume_results")
+
     global post_count
 
     session = requests.Session()
@@ -95,7 +99,7 @@ def consume_results(kafka_bootstrap="kafka:9092", server_url=None, topic="result
         auto_offset_reset='earliest',
         enable_auto_commit=True,
         group_id="middleware-consumer",
-        value_deserializer=lambda m: m
+        value_deserializer=lambda m: umsgpack.unpackb(m)
     )
 
     for message in consumer:
@@ -178,7 +182,7 @@ def main():
     signal.signal(signal.SIGINT, handle_shutdown)
     signal.signal(signal.SIGTERM, handle_shutdown)
 
-    # Step 1: Create and start benchmark
+    # Step 1: Create and start a benchmark
     bench_id = create_and_start_benchmark(args.server_url, limit=args.limit)
 
     # Step 2: Start threads

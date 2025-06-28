@@ -11,19 +11,16 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Symlink for pemja
-RUN ln -s /usr/lib/jvm/java-17-openjdk-arm64 /opt/java/openjdk
-RUN ln -s /usr/lib/jvm/java-17-openjdk-arm64/include /opt/java/openjdk/include
+RUN ln -s /usr/lib/jvm/java-17-openjdk-* /opt/java/openjdk
+RUN ln -s /usr/lib/jvm/java-17-openjdk-*/include /opt/java/openjdk/include
 
-# Install PyFlink and Python dependencies
-RUN pip3 install --no-cache-dir \
-    apache-flink==2.0.0 \
-    kafka-python~=2.2.13
+# Install dependencies
+COPY requirements.txt .
+RUN pip3 install --no-cache-dir -r requirements.txt
 
 # Download Kafka jars
-RUN wget -P /opt/flink/lib/ \
-    https://repo1.maven.org/maven2/org/apache/flink/flink-sql-connector-kafka/4.0.0-2.0/flink-sql-connector-kafka-4.0.0-2.0.jar
-
-COPY
+RUN wget -P /opt/flink/lib/ https://repo1.maven.org/maven2/org/apache/kafka/kafka-clients/4.0.0/kafka-clients-4.0.0.jar && \
+    wget -P /opt/flink/lib/ https://repo1.maven.org/maven2/org/apache/flink/flink-connector-kafka/4.0.0-2.0/flink-connector-kafka-4.0.0-2.0.jar
 
 USER flink
 

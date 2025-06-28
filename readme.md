@@ -40,3 +40,44 @@
 | **Python Orchestrator** | Calls Local Challenger APIs, produces raw batches to Kafka topic `raw-batch`, consumes results from `results`, and posts them back |
 | **Kafka**               | Central asynchronous and scalable message broker with topics `raw-batch` and `results`                                             |
 | **Flink Job**           | Consumes raw batches from Kafka topic `raw-batch`, processes them, and produces results to Kafka topic `results`                   |
+
+## Util commands
+
+### Read kafka topic
+
+Raw-batch
+```shell
+  kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic raw-batch --from-beginning
+```
+
+Results
+```shell
+  kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic results --from-beginning
+```
+
+Saturated pixels
+```shell
+  kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic saturated-pixels --from-beginning
+```
+
+### Start flink task
+
+```shell
+  flink run -pyFiles /opt/Q1.py -py /opt/flink_job.py
+```
+
+
+> ### Docker commands short-cut to read Kafka topic
+> Raw-batch  
+> ```bash
+> docker exec -it kafka kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic raw-batch --from-beginning
+> ```
+> Results
+> ```shell
+> docker exec -it kafka kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic results --from-beginning
+> ```
+> 
+> Saturated pixels
+> ```shell
+> docker exec -it kafka kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic saturated-pixels --from-beginning
+> ```

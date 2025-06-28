@@ -22,6 +22,28 @@ services:
     networks:
       - flink-network
 
+  kafka-init:
+    image: bitnami/kafka:latest
+    depends_on:
+      - kafka
+    entrypoint: [ "sh", "-c" ]
+    command: |
+      "
+      echo 'Waiting for Kafka to be ready...' &&
+      kafka-topics.sh --bootstrap-server kafka:9092 --list > /dev/null 2>&1
+      until [ $? -eq 0 ]; do
+        sleep 2
+        kafka-topics.sh --bootstrap-server kafka:9092 --list > /dev/null 2>&1
+      done
+      echo 'Creating topic raw-batch and results...' &&
+      kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic raw-batch --partitions 1 --replication-factor 1 &&
+      kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic results --partitions 1 --replication-factor 1 &&
+      kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic saturated-pixels --partitions 1 --replication-factor 1
+      echo 'DONE.'
+      "
+    networks:
+      - flink-network
+
   flink-jobmanager:
     build:
       context: ./flink-python
@@ -32,14 +54,17 @@ services:
     ports:
       - "8081:8081"
     environment:
+      - PYTHONPATH=/opt
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
       - FLINK_PROPERTIES=jobmanager.rpc.address:flink-jobmanager
+    volumes:
+      - ./flink-python/flink_raw_batch_job.py:/opt/flink_job.py:ro
+      - ./flink-python/Q1.py:/opt/Q1.py
     networks:
       - flink-network
 
   flink-taskmanager:
     image: custom-flink:latest
-    container_name: flink-taskmanager
     depends_on:
       - flink-jobmanager
     command: taskmanager
@@ -48,10 +73,15 @@ services:
       - |
         FLINK_PROPERTIES=
         jobmanager.rpc.address:flink-jobmanager
-        taskmanager.numberOfTaskSlots: 4
-#      - FLINK_PROPERTIES=jobmanager.rpc.address:flink-jobmanager
+        taskmanager.numberOfTaskSlots:2
+        taskmanager.memory.process.size:2048m
+        taskmanager.memory.task.off-heap.size_512:b
+        taskmanager.memory.framework.off-heap.size:256mb
+      - VERBOSE=0
     networks:
       - flink-network
+    deploy:
+      replicas: 1
 
   middleware:
     build:
@@ -67,8 +97,8 @@ services:
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
       - CHALLENGER_URL=http://local-challenger:8866
-      - VERBOSE=1 # Add more middleware logs, but increase middleware job weight
-#      - INTERVAL=2 # Time through every new message in 'raw-batch' topic
+      - VERBOSE=1 # Add more middleware logs but increase middleware job weight
+      - INTERVAL=5 # Time through every new message in the 'raw-batch' topic
 #      - LIMIT=20 # A limit can be set via environment
     networks:
       - flink-network
