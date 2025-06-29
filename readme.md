@@ -60,12 +60,24 @@ Saturated pixels
   kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic saturated-pixels --from-beginning
 ```
 
+Saturated rank
+```shell
+  kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic saturated-rank --from-beginning
+```
+
 ### Start flink task
 
 ```shell
-  flink run -pyFiles /opt/Q1.py -py /opt/flink_job.py
+  flink run -pyFiles /opt/Q1.py,/opt/Q2.py -py /opt/flink_job.py
 ```
 
+```shell
+  flink run -p2 -pyFiles /opt/Q1.py,/opt/Q2.py -py /opt/flink_job.py
+```
+
+```shell
+  flink run -p8 -pyFiles /opt/Q1.py,/opt/Q2.py -py /opt/flink_job.py
+```
 
 > ### Docker commands short-cut to read Kafka topic
 > Raw-batch  
@@ -80,4 +92,9 @@ Saturated pixels
 > Saturated pixels
 > ```shell
 > docker exec -it kafka kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic saturated-pixels --from-beginning
+> ```
+> 
+> Saturated rank
+> ```shell
+> docker exec -it kafka kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic saturated-rank --from-beginning
 > ```

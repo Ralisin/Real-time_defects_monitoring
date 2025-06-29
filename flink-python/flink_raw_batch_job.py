@@ -1,13 +1,8 @@
 import base64
-import io
-import json
 import msgpack
-import numpy as np
-import os
-from PIL import Image
-import heapq
 
 from Q1 import *
+from Q2 import *
 
 from pyflink.common import WatermarkStrategy, Row
 from pyflink.datastream import StreamExecutionEnvironment
@@ -17,11 +12,13 @@ from pyflink.datastream.connectors.kafka import (
     KafkaOffsetsInitializer,
     KafkaRecordSerializationSchema
 )
-from pyflink.common.typeinfo import Types
 from pyflink.datastream.functions import MapFunction
 from pyflink.common.serialization import ByteArraySchema, SimpleStringSchema
+from pyflink.common.typeinfo import Types
 
 VERBOSE = os.getenv("VERBOSE", "false").lower() in ("1", "true", "yes")
+
+OUTLIER_THRESH = 6000
 
 class MsgpackBytesToRowMapper(MapFunction):
     def map(self, value):
@@ -73,19 +70,19 @@ class MsgpackBytesToRowMapper(MapFunction):
 
         except Exception as e:
             print(f"Error decoding msgpack: {e}")
-            error_obj = {
-                "error": str(e),
-                "error_type": type(e).__name__,
-                "value_type": str(type(value)),
-                "value_repr": repr(value)[:200] if hasattr(value, '__repr__') else "no repr"
-            }
-            return json.dumps(error_obj, indent=2)
+            return Row(
+                print_id=None,
+                batch_id=None,
+                tile_id=None,
+                layer=None,
+                tif=None
+            )
 
 def main():
     print("=== Starting Flink Kafka MsgPack Consumer ===")
 
     env = StreamExecutionEnvironment.get_execution_environment()
-    env.set_parallelism(1)
+    # env.set_parallelism(1)
 
     print("Creating Kafka source with ByteArraySchema and Kafka Sinks...")
 
@@ -100,9 +97,20 @@ def main():
 
     kafka_sink_q1 = KafkaSink.builder() \
         .set_bootstrap_servers("kafka:9092") \
+        .set_transactional_id_prefix("sink-saturated-pixels") \
         .set_record_serializer(
             KafkaRecordSerializationSchema.builder()
             .set_topic("saturated-pixels")
+            .set_value_serialization_schema(SimpleStringSchema())
+            .build()
+        ).build()
+
+    kafka_sink_q2 = KafkaSink.builder() \
+        .set_bootstrap_servers("kafka:9092") \
+        .set_transactional_id_prefix("sink-saturated-rank") \
+        .set_record_serializer(
+            KafkaRecordSerializationSchema.builder()
+            .set_topic("saturated-rank")
             .set_value_serialization_schema(SimpleStringSchema())
             .build()
         ).build()
@@ -133,11 +141,15 @@ def main():
         )
     )
 
+    print("Detecting saturated pixels...")
+
     # Q1
     saturated_ds = obj_ds.map(DetectSaturatedPixels(), output_type=Types.STRING())
     saturated_ds.sink_to(kafka_sink_q1)
 
-    # Data filtered (all outrange points are set to 0)
+    print("Filtering outliers from images... (this may take a while)")
+
+    # Data filtered (all outranged points are set to 0)
     filtered_ds = obj_ds.map(FilterPixels(), output_type=Types.ROW_NAMED(
         ["print_id", "batch_id", "tile_id", "layer", "tif"],
         [
@@ -149,19 +161,42 @@ def main():
         ]
     ))
 
-    # keyed = filtered_ds.key_by(lambda row: row.tile_id, key_type=Types.INT())
+    print("Windowing data and computing outliers... (this may take a while)")
 
-    # def image_mode(row):
-    #     image = Image.open(io.BytesIO(row[4]))
-    #
-    #     print(f"Image mode: {image.mode}")
-    #
-    #     np_image = np.array(image)
-    #     print(f"Image shape: {np_image.shape}")
-    #     print(f"Image dtype: {np_image.dtype}")
-    #     print(f"Max pixel: {np_image.max()}, Min pixel: {np_image.min()}")
-    #
-    # obj_ds.map(image_mode)
+    # Q2
+    keyed_windowed_ds = filtered_ds.key_by(lambda row: row.tile_id, key_type=Types.INT()).count_window(3, 1)
+
+    outlier_points_ds = keyed_windowed_ds.process(
+        TemperatureDeviation(),
+        output_type=Types.ROW_NAMED(
+            ["print_id", "batch_id", "tile_id", "layers", "outlier_points"],
+            [
+                Types.STRING(),
+                Types.INT(),
+                Types.INT(),
+                Types.LIST(Types.INT()),
+                Types.LIST(
+                    Types.TUPLE([Types.INT(), Types.INT(), Types.FLOAT()])
+                )
+            ]
+        )
+    )
+
+    # ranked_outliers_ds = outlier_points_ds.map(
+    #     OutlierRanker(),
+    #     output_type=Types.ROW([
+    #         Types.INT(),             # seq_id
+    #         Types.STRING(),          # print_id
+    #         Types.INT(),             # tile_id
+    #         Types.TUPLE([Types.INT(), Types.INT()]), Types.FLOAT(),
+    #         Types.TUPLE([Types.INT(), Types.INT()]), Types.FLOAT(),
+    #         Types.TUPLE([Types.INT(), Types.INT()]), Types.FLOAT(),
+    #         Types.TUPLE([Types.INT(), Types.INT()]), Types.FLOAT(),
+    #         Types.TUPLE([Types.INT(), Types.INT()]), Types.FLOAT()
+    #     ])
+    # )
+    ranked_outliers_ds = outlier_points_ds.map(OutlierRanker(), output_type=Types.STRING())
+    ranked_outliers_ds.sink_to(kafka_sink_q2)
 
     print("Starting job execution...")
     env.execute("Flink 2.0 - Kafka MsgPack Consumer")

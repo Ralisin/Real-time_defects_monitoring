@@ -1,10 +1,13 @@
+from PIL import Image
 import io
 import json
 import numpy as np
-from PIL import Image
+import os
 
 from pyflink.common import Row
 from pyflink.datastream import MapFunction
+
+VERBOSE = os.getenv("VERBOSE", "false").lower() in ("1", "true", "yes")
 
 EMPTY_THRESH = 5000
 SATURATION_THRESH = 65000
@@ -22,6 +25,9 @@ class DetectSaturatedPixels(MapFunction):
 
             saturated_count = np.sum(np_image > SATURATION_THRESH)
 
+            if VERBOSE:
+                print(f"Print_id: {print_id}, batch_id: {batch_id}, tile_id: {tile_id} Saturated pixels: {saturated_count}")
+
             return json.dumps({
                 "seq_id": batch_id,
                 "print_id": print_id,
@@ -36,13 +42,6 @@ class DetectSaturatedPixels(MapFunction):
                 "tile_id": tile_id,
                 "saturated": -1  # -1 indicates a processing error
             })
-
-class Q1ToJsonMapFunction(MapFunction):
-    def map(self, row):
-        return json.dumps({
-            "seq_id": row[0],
-            "print_id": row[1],
-        })
 
 class FilterPixels(MapFunction):
     def map(self, row):

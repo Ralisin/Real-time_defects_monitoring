@@ -259,6 +259,42 @@ def process(batch):
         # Create 3D matrix by stacking 3 layers
         image3d = np.stack(window, axis=0)
 
+        # Padding con NaN
+        image3d_padded = np.pad(image3d, ((0, 0), (2, 2), (2, 2)), mode='constant', constant_values=np.nan)
+
+        # Maschere fisse
+        shape = (3, 5, 5)
+        center = (2, 2, 2)
+        l, x, y = np.indices(shape)
+        dist = np.abs(l - center[0]) + np.abs(x - center[1]) + np.abs(y - center[2])
+        mask_nearest = dist <= 2
+        mask_external = (dist > 2) & (dist <= 4)
+
+        top_layer_idx = image3d.shape[0] - 1
+        height, width = image3d.shape[1], image3d.shape[2]
+
+        exceeding_temp_dev_points = []
+
+        for x_p in range(height):
+            for y_p in range(width):
+                patch = image3d_padded[top_layer_idx - 2:top_layer_idx + 1, x_p:x_p + 5, y_p:y_p + 5]  # shape (3,5,5)
+
+                local_neighbors = patch[mask_nearest]
+                external_neighbors = patch[mask_external]
+
+                avg_local = np.nanmean(local_neighbors)
+                avg_external = np.nanmean(external_neighbors)
+
+                if np.isnan(avg_local) or np.isnan(avg_external):
+                    continue  # salta se non hai dati reali
+
+                local_temp_deviation = abs(avg_local - avg_external)
+
+                if local_temp_deviation > 6000:
+                    print(
+                        f"layer: {top_layer_idx}, tile_id: {tile_id}, point: ({x_p}, {y_p}), local_temp_deviation: {local_temp_deviation}")
+                    # exceeding_temp_dev_points.append((x_p, y_p))
+
         # Compute outliers by comparing each pixel to its neighbors
         outliers = compute_outliers(image3d, EMPTY_THRESH, SATURATION_THRESH, DISTANCE_FACTOR, OUTLIER_THRESH)
 
