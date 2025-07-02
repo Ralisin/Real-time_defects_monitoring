@@ -83,6 +83,7 @@ def main():
 
     env = StreamExecutionEnvironment.get_execution_environment()
     # env.set_parallelism(1)
+    env.enable_checkpointing(5000)
 
     print("Creating Kafka source with ByteArraySchema and Kafka Sinks...")
 
@@ -145,7 +146,11 @@ def main():
 
     # Q1
     saturated_ds = obj_ds.map(DetectSaturatedPixels(), output_type=Types.STRING())
-    saturated_ds.sink_to(kafka_sink_q1)
+    saturated_ds \
+        .sink_to(kafka_sink_q1) \
+        .name("kafka-sink-saturated-pixels") \
+        .uid("sink-saturated-pixels") \
+        .set_parallelism(1)
 
     print("Filtering outliers from images... (this may take a while)")
 
@@ -182,21 +187,12 @@ def main():
         )
     )
 
-    # ranked_outliers_ds = outlier_points_ds.map(
-    #     OutlierRanker(),
-    #     output_type=Types.ROW([
-    #         Types.INT(),             # seq_id
-    #         Types.STRING(),          # print_id
-    #         Types.INT(),             # tile_id
-    #         Types.TUPLE([Types.INT(), Types.INT()]), Types.FLOAT(),
-    #         Types.TUPLE([Types.INT(), Types.INT()]), Types.FLOAT(),
-    #         Types.TUPLE([Types.INT(), Types.INT()]), Types.FLOAT(),
-    #         Types.TUPLE([Types.INT(), Types.INT()]), Types.FLOAT(),
-    #         Types.TUPLE([Types.INT(), Types.INT()]), Types.FLOAT()
-    #     ])
-    # )
     ranked_outliers_ds = outlier_points_ds.map(OutlierRanker(), output_type=Types.STRING())
-    ranked_outliers_ds.sink_to(kafka_sink_q2)
+    ranked_outliers_ds \
+        .sink_to(kafka_sink_q2) \
+        .name("kafka-sink-saturated-rank") \
+        .uid("sink-saturated-rank") \
+        .set_parallelism(1)
 
     print("Starting job execution...")
     env.execute("Flink 2.0 - Kafka MsgPack Consumer")

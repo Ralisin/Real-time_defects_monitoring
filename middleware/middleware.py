@@ -121,6 +121,54 @@ def consume_results(kafka_bootstrap="kafka:9092", server_url=None, topic="result
         except Exception as e:
             logger.error(f"Result processing error: {e}")
 
+def consume_q1(kafka_bootstrap="kafka:9092", server_url=None, topic="saturated-pixels"):
+    logger = logging.getLogger("consume_q1")
+
+    global post_count
+
+    consumer = KafkaConsumer(
+        topic,
+        bootstrap_servers=kafka_bootstrap,
+        auto_offset_reset='earliest',
+        enable_auto_commit=True,
+        group_id="middleware-consumer",
+        value_deserializer=lambda m: m
+    )
+
+    for message in consumer:
+        if stop_event.is_set():
+            break
+        try:
+            data = message
+            logger.info(f"Consumed result: {data}")
+
+        except Exception as e:
+            logger.error(f"Result processing error: {e}")
+
+def consume_q2(kafka_bootstrap="kafka:9092", server_url=None, topic="saturated-rank"):
+    logger = logging.getLogger("consume_q2")
+
+    global post_count
+
+    consumer = KafkaConsumer(
+        topic,
+        bootstrap_servers=kafka_bootstrap,
+        auto_offset_reset='earliest',
+        enable_auto_commit=True,
+        group_id="middleware-consumer",
+        value_deserializer=lambda m: m
+    )
+
+    for message in consumer:
+        if stop_event.is_set():
+            break
+        try:
+            data = message
+            logger.info(f"Consumed result: {data}")
+
+        except Exception as e:
+            logger.error(f"Result processing error: {e}")
+
 def create_and_start_benchmark(server_url, limit=None):
     session = requests.Session()
     logger.info("Creating benchmark")
@@ -188,15 +236,21 @@ def main():
     # Step 2: Start threads
     batch_thread = threading.Thread(target=poll_batches, args=(args.server_url, bench_id, args.kafka), kwargs={"interval": args.interval, "verbose": args.verbose})
     kafka_thread = threading.Thread(target=consume_results, args=(args.kafka, args.server_url))
+    q1_thread = threading.Thread(target=consume_q1, args=(args.kafka, args.server_url))
+    q2_thread = threading.Thread(target=consume_q2, args=(args.kafka, args.server_url))
     watcher_thread = threading.Thread(target=watch_and_end, args=(args.server_url, bench_id))
 
     batch_thread.start()
     kafka_thread.start()
+    q1_thread.start()
+    q2_thread.start()
     watcher_thread.start()
 
     # Step 3: Wait threads
     batch_thread.join()
     kafka_thread.join()
+    q1_thread.join()
+    q2_thread.join()
     watcher_thread.join()
 
     logger.info("Middleware exited cleanly.")
