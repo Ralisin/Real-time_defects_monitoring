@@ -97,35 +97,6 @@ class TemperatureDeviation(ProcessWindowFunction):
             ]
 
 class OutlierRanker(MapFunction):
-    # def map(self, row):
-    #     print_id, batch_id, tile_id, layers, outlier_points = row
-    #
-    #     # Sort outlier point descendent
-    #     sorted_points = sorted(outlier_points, key=lambda p: p[2], reverse=True)
-    #
-    #     # Take the first five elements
-    #     top5 = sorted_points[:5]
-    #     while len(top5) < 5:
-    #         top5.append((None, None, None))
-    #
-    #     seq_id = batch_id
-    #
-    #     # output format: seq_id, print_id, tile_id, P1 (x,y), δP1, P2, δP2, ..., P5, δP5
-    #     output_row = [seq_id, print_id, tile_id]
-    #
-    #     for p in top5:
-    #         x, y, dev = p
-    #         if x is None:
-    #             output_row.extend([(-1, -1), -1.0])
-    #         else:
-    #             output_row.extend([(x, y), dev])
-    #
-    #     if VERBOSE:
-    #         print(f"Output row for tile_id: {tile_id} - {layers}: {output_row}")
-    #     print(f"Output row for tile_id: {tile_id} - {layers}: {output_row}")
-    #
-    #     return Row(*output_row)
-
     def map(self, row):
         print_id, batch_id, tile_id, layers, outlier_points = row
 

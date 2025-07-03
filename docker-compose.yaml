@@ -81,6 +81,8 @@ services:
         taskmanager.memory.process.size:8096mb
         taskmanager.memory.task.off-heap.size:1024mb
         taskmanager.memory.framework.off-heap.size:512mb
+        kafka.transaction.timeout.ms:900000
+        kafka.transactional.id.prefix:flink-kafka-producer
       - VERBOSE=0
     networks:
       - flink-network

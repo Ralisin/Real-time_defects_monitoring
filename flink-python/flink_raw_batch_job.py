@@ -1,11 +1,14 @@
 import base64
 import msgpack
+import json
+import os
 
 from Q1 import *
 from Q2 import *
 
 from pyflink.common import WatermarkStrategy, Row
-from pyflink.datastream import StreamExecutionEnvironment
+from pyflink.datastream import StreamExecutionEnvironment, CheckpointingMode
+from pyflink.datastream.connectors import DeliveryGuarantee
 from pyflink.datastream.connectors.kafka import (
     KafkaSink,
     KafkaSource,
@@ -82,8 +85,8 @@ def main():
     print("=== Starting Flink Kafka MsgPack Consumer ===")
 
     env = StreamExecutionEnvironment.get_execution_environment()
-    # env.set_parallelism(1)
-    env.enable_checkpointing(5000)
+    env.set_parallelism(1)
+    env.enable_checkpointing(300000, CheckpointingMode.AT_LEAST_ONCE)
 
     print("Creating Kafka source with ByteArraySchema and Kafka Sinks...")
 
@@ -96,25 +99,31 @@ def main():
         .set_value_only_deserializer(ByteArraySchema()) \
         .build()
 
-    kafka_sink_q1 = KafkaSink.builder() \
-        .set_bootstrap_servers("kafka:9092") \
-        .set_transactional_id_prefix("sink-saturated-pixels") \
-        .set_record_serializer(
-            KafkaRecordSerializationSchema.builder()
-            .set_topic("saturated-pixels")
-            .set_value_serialization_schema(SimpleStringSchema())
-            .build()
-        ).build()
+    # kafka_sink_q1 = KafkaSink.builder() \
+    #     .set_bootstrap_servers("kafka:9092") \
+    #     .set_record_serializer(
+    #         KafkaRecordSerializationSchema.builder()
+    #         .set_topic("saturated-pixels")
+    #         .set_value_serialization_schema(SimpleStringSchema())
+    #         .build()
+    #     ) \
+    #     .set_delivery_guarantee(DeliveryGuarantee.AT_LEAST_ONCE) \
+    #     .set_property("linger.ms", "1") \
+    #     .set_property("batch.size", "1") \
+    #     .build()
 
     kafka_sink_q2 = KafkaSink.builder() \
         .set_bootstrap_servers("kafka:9092") \
-        .set_transactional_id_prefix("sink-saturated-rank") \
         .set_record_serializer(
             KafkaRecordSerializationSchema.builder()
             .set_topic("saturated-rank")
             .set_value_serialization_schema(SimpleStringSchema())
             .build()
-        ).build()
+        ) \
+        .set_delivery_guarantee(DeliveryGuarantee.AT_LEAST_ONCE) \
+        .set_property("linger.ms", "1") \
+        .set_property("batch.size", "1") \
+        .build()
 
     print("Creating data stream from source...")
 
@@ -146,11 +155,10 @@ def main():
 
     # Q1
     saturated_ds = obj_ds.map(DetectSaturatedPixels(), output_type=Types.STRING())
-    saturated_ds \
-        .sink_to(kafka_sink_q1) \
-        .name("kafka-sink-saturated-pixels") \
-        .uid("sink-saturated-pixels") \
-        .set_parallelism(1)
+    # saturated_ds \
+    #     .sink_to(kafka_sink_q1) \
+    #     .name("kafka-sink-saturated-pixels") \
+    #     .uid("sink-saturated-pixels")
 
     print("Filtering outliers from images... (this may take a while)")
 
@@ -191,8 +199,7 @@ def main():
     ranked_outliers_ds \
         .sink_to(kafka_sink_q2) \
         .name("kafka-sink-saturated-rank") \
-        .uid("sink-saturated-rank") \
-        .set_parallelism(1)
+        .uid("sink-saturated-rank")
 
     print("Starting job execution...")
     env.execute("Flink 2.0 - Kafka MsgPack Consumer")
