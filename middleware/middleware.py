@@ -1,10 +1,12 @@
 import argparse
 import os
 import signal
+import json
 
 from kafka import KafkaConsumer, KafkaProducer
 import logging
 import requests
+import redis
 import umsgpack
 import threading
 import time
@@ -85,7 +87,6 @@ def poll_batches(server_url, bench_id, kafka_bootstrap="kafka:9092", topic="raw-
             logger.error(f"Polling error: {e}")
         time.sleep(interval)
 
-
 def consume_results(kafka_bootstrap="kafka:9092", server_url=None, topic="results"):
     logger = logging.getLogger("consume_results")
 
@@ -121,53 +122,68 @@ def consume_results(kafka_bootstrap="kafka:9092", server_url=None, topic="result
         except Exception as e:
             logger.error(f"Result processing error: {e}")
 
-def consume_q1(kafka_bootstrap="kafka:9092", server_url=None, topic="saturated-pixels"):
-    logger = logging.getLogger("consume_q1")
+def consume_q1_redis(redis_host='redis', redis_port=6379, channel='saturated-pixels'):
+    logger = logging.getLogger("consume_q1_redis")
 
-    global post_count
+    r = redis.Redis(host=redis_host, port=redis_port, decode_responses=True)
+    pubsub = r.pubsub()
+    pubsub.subscribe(channel)
+    logger.info(f"[consume_q1_redis] Subscribed to Redis channel: {channel}")
 
-    consumer = KafkaConsumer(
-        topic,
-        bootstrap_servers=kafka_bootstrap,
-        auto_offset_reset='earliest',
-        enable_auto_commit=True,
-        group_id="middleware-consumer",
-        value_deserializer=lambda m: m
-    )
-
-    for message in consumer:
+    for message in pubsub.listen():
+        if message['type'] == 'message':
+            try:
+                data = message['data']  # è una stringa se decode_responses=True
+                # Se i messaggi sono JSON:
+                data = json.loads(data)
+                logger.info(f"[consume_q1_redis] Consumed result from Redis: {data}")
+                # Qui fai quello che devi con 'data'
+            except Exception as e:
+                logger.error(f"[consume_q1_redis] Error processing message from Redis: {e}")
         if stop_event.is_set():
             break
-        try:
-            data = message
-            logger.info(f"Consumed result: {data}")
 
-        except Exception as e:
-            logger.error(f"Result processing error: {e}")
+def consume_q2_redis(redis_host='redis', redis_port=6379, db=0, channel='saturated-rank'):
+    logger = logging.getLogger("consume_q2_redis")
 
-def consume_q2(kafka_bootstrap="kafka:9092", server_url=None, topic="saturated-rank"):
-    logger = logging.getLogger("consume_q2")
+    r = redis.Redis(host=redis_host, port=redis_port, db=db, decode_responses=True)
+    pubsub = r.pubsub()
+    pubsub.subscribe(channel)
+    logger.info(f"[consume_q2_redis] Subscribed to Redis channel: {channel}")
 
-    global post_count
-
-    consumer = KafkaConsumer(
-        topic,
-        bootstrap_servers=kafka_bootstrap,
-        auto_offset_reset='earliest',
-        enable_auto_commit=True,
-        group_id="middleware-consumer",
-        value_deserializer=lambda m: m
-    )
-
-    for message in consumer:
+    for message in pubsub.listen():
+        if message['type'] == 'message':
+            try:
+                data = message['data']
+                # Se i messaggi sono JSON:
+                data = json.loads(data)
+                logger.info(f"[consume_q2_redis] Consumed result from Redis: {data}")
+                # Qui fai quello che devi con 'data'
+            except Exception as e:
+                logger.error(f"[consume_q2_redis] Error processing message from Redis: {e}")
         if stop_event.is_set():
             break
-        try:
-            data = message
-            logger.info(f"Consumed result: {data}")
 
-        except Exception as e:
-            logger.error(f"Result processing error: {e}")
+def consume_q3_redis(redis_host='redis', redis_port=6379, db=0, channel='centroids'):
+    logger = logging.getLogger("consume_q3_redis")
+
+    r = redis.Redis(host=redis_host, port=redis_port, db=db, decode_responses=True)
+    pubsub = r.pubsub()
+    pubsub.subscribe(channel)
+    logger.info(f"[consume_q3_redis] Subscribed to Redis channel: {channel}")
+
+    for message in pubsub.listen():
+        if message['type'] == 'message':
+            try:
+                data = message['data']
+                # Se i messaggi sono JSON:
+                data = json.loads(data)
+                logger.info(f"[consume_q3_redis] Consumed result from Redis: {data}")
+                # Qui fai quello che devi con 'data'
+            except Exception as e:
+                logger.error(f"[consume_q3_redis] Error processing message from Redis: {e}")
+        if stop_event.is_set():
+            break
 
 def create_and_start_benchmark(server_url, limit=None):
     session = requests.Session()
@@ -236,14 +252,16 @@ def main():
     # Step 2: Start threads
     batch_thread = threading.Thread(target=poll_batches, args=(args.server_url, bench_id, args.kafka), kwargs={"interval": args.interval, "verbose": args.verbose})
     kafka_thread = threading.Thread(target=consume_results, args=(args.kafka, args.server_url))
-    q1_thread = threading.Thread(target=consume_q1, args=(args.kafka, args.server_url))
-    q2_thread = threading.Thread(target=consume_q2, args=(args.kafka, args.server_url))
+    q1_thread = threading.Thread(target=consume_q1_redis)
+    q2_thread = threading.Thread(target=consume_q2_redis)
+    q3_thread = threading.Thread(target=consume_q3_redis)
     watcher_thread = threading.Thread(target=watch_and_end, args=(args.server_url, bench_id))
 
     batch_thread.start()
     kafka_thread.start()
     q1_thread.start()
     q2_thread.start()
+    q3_thread.start()
     watcher_thread.start()
 
     # Step 3: Wait threads
@@ -251,6 +269,7 @@ def main():
     kafka_thread.join()
     q1_thread.join()
     q2_thread.join()
+    q3_thread.join()
     watcher_thread.join()
 
     logger.info("Middleware exited cleanly.")

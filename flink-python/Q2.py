@@ -18,11 +18,13 @@ class TemperatureDeviation(ProcessWindowFunction):
 
             print_id = events[0].print_id
             batch_id = events[0].batch_id
+
             tile_id = events[0].tile_id
+            saturated_count = events[0].saturated_count
             layers = [int(e.layer) for e in events]
 
             if VERBOSE:
-                print(f"[TemperatureDeviationFunction] tile_id: {tile_id}, layers: {layers}")
+                print(f"[TemperatureDeviation] batch_id: {batch_id}, tile_id: {tile_id}, layers: {layers}")
 
             image3d = np.stack([Image.open(io.BytesIO(e.tif)) for e in events], axis=0)
 
@@ -67,19 +69,17 @@ class TemperatureDeviation(ProcessWindowFunction):
                     local_temp_deviation = abs(float(avg_local) - float(avg_external))
 
                     if local_temp_deviation > 6000:
-                        # if VERBOSE:
-                        #     print(f"layers: {layers}, tile_id: {tile_id}, point: ({x_p}, {y_p}), local_temp_deviation: {local_temp_deviation}")
-
                         outlier_points.append((int(x_p), int(y_p), float(local_temp_deviation)))
 
             if VERBOSE:
-                print(f"layers: {layers}, tile_id: {tile_id}, outlier_points len: {len(outlier_points) if outlier_points else 'no points'}")
+                print(f"[TemperatureDeviation] layers: {layers}, batch_id: {batch_id}, tile_id: {tile_id}, outlier_points len: {len(outlier_points)}")
 
             result_row = Row(
                 print_id=print_id,
                 batch_id=batch_id,
                 tile_id=tile_id,
                 layers=layers,
+                saturated_count=saturated_count,
                 outlier_points=outlier_points
             )
 
@@ -92,73 +92,91 @@ class TemperatureDeviation(ProcessWindowFunction):
                     batch_id=-1,
                     tile_id=-1,
                     layers=[],
+                    saturated_count=-1,
                     outlier_points=[]
                 )
             ]
 
 class OutlierRanker(MapFunction):
-    # def map(self, row):
-    #     print_id, batch_id, tile_id, layers, outlier_points = row
-    #
-    #     # Sort outlier point descendent
-    #     sorted_points = sorted(outlier_points, key=lambda p: p[2], reverse=True)
-    #
-    #     # Take the first five elements
-    #     top5 = sorted_points[:5]
-    #     while len(top5) < 5:
-    #         top5.append((None, None, None))
-    #
-    #     seq_id = batch_id
-    #
-    #     # output format: seq_id, print_id, tile_id, P1 (x,y), δP1, P2, δP2, ..., P5, δP5
-    #     output_row = [seq_id, print_id, tile_id]
-    #
-    #     for p in top5:
-    #         x, y, dev = p
-    #         if x is None:
-    #             output_row.extend([(-1, -1), -1.0])
-    #         else:
-    #             output_row.extend([(x, y), dev])
-    #
-    #     if VERBOSE:
-    #         print(f"Output row for tile_id: {tile_id} - {layers}: {output_row}")
-    #     print(f"Output row for tile_id: {tile_id} - {layers}: {output_row}")
-    #
-    #     return Row(*output_row)
-
     def map(self, row):
-        print_id, batch_id, tile_id, layers, outlier_points = row
+        print_id, batch_id, tile_id, layers, saturated_count, outlier_points = row
 
-        sorted_points = sorted(outlier_points, key=lambda p: p[2], reverse=True)
-        top5 = sorted_points[:5]
-        while len(top5) < 5:
-            top5.append((None, None, None))
+        try:
+            sorted_points = sorted(outlier_points, key=lambda p: p[2], reverse=True)
+            top5 = sorted_points[:5]
+            while len(top5) < 5:
+                top5.append((None, None, None))
 
-        seq_id = batch_id
+            seq_id = batch_id
 
-        # costruisco il dict
-        result = {
-            "seq_id": seq_id,
-            "print_id": print_id,
-            "tile_id": tile_id,
-            "top5": []
-        }
+            fields = []
 
-        for p in top5:
-            x, y, dev = p
-            if x is None:
-                result["top5"].append({
-                    "point": (-1, -1),
-                    "deviation": -1.0
-                })
+            for p in top5:
+                x, y, dev = p
+                if x is None:
+                    fields.append((-1, -1))
+                    fields.append(-1.0)
+                else:
+                    fields.append((x, y))
+                    fields.append(dev)
+
+            return Row(
+                seq_id=seq_id,
+                print_id=print_id,
+                tile_id=tile_id,
+                p1_point=fields[0],
+                dp1=fields[1],
+                p2_point=fields[2],
+                dp2=fields[3],
+                p3_point=fields[4],
+                dp3=fields[5],
+                p4_point=fields[6],
+                dp4=fields[7],
+                p5_point=fields[8],
+                dp5=fields[9],
+            )
+
+        except Exception as e:
+            print(f"[OutlierRanker] Error processing image: {e}")
+            fields = []
+            for _ in range(5):
+                fields.append((-2, -2))
+                fields.append(-2.0)
+
+            return Row(
+                seq_id=batch_id,
+                print_id=print_id,
+                tile_id=tile_id,
+                p1_point=fields[0],
+                dp1=fields[1],
+                p2_point=fields[2],
+                dp2=fields[3],
+                p3_point=fields[4],
+                dp3=fields[5],
+                p4_point=fields[6],
+                dp4=fields[7],
+                p5_point=fields[8],
+                dp5=fields[9],
+            )
+
+class ExtractCSVFieldsQ2(MapFunction):
+    def map(self, row):
+        def point_to_str(point):
+            if point is None or point == (-1, -1):
+                return "(-1;-1)"
             else:
-                result["top5"].append({
-                    "point": (x, y),
-                    "deviation": dev
-                })
+                return f"({point[0]};{point[1]})"
 
-        if VERBOSE:
-            print(f"Output JSON for tile_id: {tile_id} - {layers}: {result}")
-        print(f"Output JSON for tile_id: {tile_id} - {layers}: {result}")
+        print(f"[ExtractCSVFieldsQ2] row: {row}")
 
-        return json.dumps(result)
+        csv_line = (
+            f"{row.seq_id},{row.print_id},{row.tile_id}," +
+            f"{point_to_str(row.p1_point)},{row.dp1}," +
+            f"{point_to_str(row.p2_point)},{row.dp2}," +
+            f"{point_to_str(row.p3_point)},{row.dp3}," +
+            f"{point_to_str(row.p4_point)},{row.dp4}," +
+            f"{point_to_str(row.p5_point)},{row.dp5}"
+        )
+
+        print(f"[ExtractCSVFieldsQ2] csv_line: {csv_line}")
+        return csv_line

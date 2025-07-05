@@ -1,32 +1,36 @@
 import base64
 import msgpack
+import redis
 
 from Q1 import *
 from Q2 import *
+from Q3 import *
 
-from pyflink.common import WatermarkStrategy, Row
+from pyflink.common import WatermarkStrategy, Row, Configuration, Duration
+from pyflink.datastream.connectors.file_system import FileSink, OutputFileConfig, RollingPolicy
 from pyflink.datastream import StreamExecutionEnvironment
 from pyflink.datastream.connectors.kafka import (
-    KafkaSink,
     KafkaSource,
     KafkaOffsetsInitializer,
-    KafkaRecordSerializationSchema
 )
 from pyflink.datastream.functions import MapFunction
-from pyflink.common.serialization import ByteArraySchema, SimpleStringSchema
+from pyflink.common.serialization import ByteArraySchema, Encoder
 from pyflink.common.typeinfo import Types
 
 VERBOSE = os.getenv("VERBOSE", "false").lower() in ("1", "true", "yes")
+REDIS = os.getenv("REDIS", "false").lower() in ("1", "true", "yes")
 
 OUTLIER_THRESH = 6000
+
+output_path_q1 = "file:///flink_output/q1_output"
+output_path_q2 = "file:///flink_output/q2_output"
+output_path_q3 = "file:///flink_output/q3_output"
 
 class MsgpackBytesToRowMapper(MapFunction):
     def map(self, value):
         try:
             if VERBOSE:
-                print(f"Received value: {repr(value)[:100]}")
-                print(f"Value type: {type(value)}")
-                print(f"Value length: {len(value) if hasattr(value, '__len__') else 'no length'}")
+                print(f"[MsgpackBytesToRowMapper] Received value: {repr(value)[:100]}")
 
             if isinstance(value, bytes):
                 message_bytes = value
@@ -36,9 +40,6 @@ class MsgpackBytesToRowMapper(MapFunction):
                 message_bytes = value.encode('latin1')
             else:
                 message_bytes = str(value).encode('utf-8')
-
-            if VERBOSE:
-                print(f"First 20 bytes: {message_bytes[:20]}")
 
             # Decodifica msgpack con raw=False
             obj = msgpack.unpackb(message_bytes, raw=False)
@@ -58,7 +59,7 @@ class MsgpackBytesToRowMapper(MapFunction):
                 converted_obj = convert_bytes(obj)
 
                 json_obj = json.dumps(converted_obj)
-                print(f"Successfully decoded msgpack: {json_obj[:100]}...")
+                print(f"[MsgpackBytesToRowMapper] Successfully decoded msgpack: {json_obj[:100]}...")
 
             return Row(
                 print_id=obj["print_id"],
@@ -69,7 +70,7 @@ class MsgpackBytesToRowMapper(MapFunction):
             )
 
         except Exception as e:
-            print(f"Error decoding msgpack: {e}")
+            print(f"[MsgpackBytesToRowMapper] Error decoding msgpack: {e}")
             return Row(
                 print_id=None,
                 batch_id=None,
@@ -78,12 +79,79 @@ class MsgpackBytesToRowMapper(MapFunction):
                 tif=None
             )
 
+class RedisPublishMapFunction(MapFunction):
+    def __init__(self, channel_name, redis_host='redis', redis_port=6379, redis_db=0):
+        self.channel_name = channel_name
+        self.redis_host = redis_host
+        self.redis_port = redis_port
+        self.redis_db = redis_db
+        self.redis_client = None
+
+    def open(self, runtime_context):
+        """Inizializza la connessione Redis quando la funzione viene aperta"""
+        try:
+            self.redis_client = redis.Redis(
+                host=self.redis_host,
+                port=self.redis_port,
+                db=self.redis_db,
+                decode_responses=True
+            )
+            # Test della connessione
+            self.redis_client.ping()
+            print(f"[RedisPublishMapFunction] Redis connection established for channel: {self.channel_name}")
+        except Exception as e:
+            print(f"[RedisPublishMapFunction] Error connecting to Redis: {e}")
+            raise e
+
+    def map(self, value):
+        """Pubblica il messaggio sul canale Redis e ritorna il valore"""
+        try:
+            if self.redis_client is None:
+                raise Exception("Redis client not initialized")
+
+            # Pubblica il messaggio sul canale specificato
+            result = self.redis_client.publish(self.channel_name, str(value))
+
+            if VERBOSE:
+                print(f"Published message to {self.channel_name}: {str(value)[:100]}...")
+                print(f"Number of subscribers: {result}")
+
+            return value
+
+        except Exception as e:
+            print(f"Error publishing to Redis channel {self.channel_name}: {e}")
+            # Tenta di riconnettersi
+            try:
+                self.redis_client = redis.Redis(
+                    host=self.redis_host,
+                    port=self.redis_port,
+                    db=self.redis_db,
+                    decode_responses=True
+                )
+                self.redis_client.publish(self.channel_name, str(value))
+            except Exception as reconnect_error:
+                print(f"Failed to reconnect and publish: {reconnect_error}")
+
+            return value
+
+    def close(self):
+        """Chiude la connessione Redis"""
+        if self.redis_client:
+            self.redis_client.close()
+            print(f"Redis connection closed for channel: {self.channel_name}")
+
 def main():
     print("=== Starting Flink Kafka MsgPack Consumer ===")
 
     env = StreamExecutionEnvironment.get_execution_environment()
+
+    config = Configuration()
+    config.set_string("state.checkpoint-storage", "filesystem")
+    config.set_string("state.checkpoints.dir", "file:///tmp/flink-checkpoints")  # o HDFS
+    env.configure(config)
+
     # env.set_parallelism(1)
-    env.enable_checkpointing(5000)
+    env.enable_checkpointing(10000)
 
     print("Creating Kafka source with ByteArraySchema and Kafka Sinks...")
 
@@ -96,24 +164,55 @@ def main():
         .set_value_only_deserializer(ByteArraySchema()) \
         .build()
 
-    kafka_sink_q1 = KafkaSink.builder() \
-        .set_bootstrap_servers("kafka:9092") \
-        .set_transactional_id_prefix("sink-saturated-pixels") \
-        .set_record_serializer(
-            KafkaRecordSerializationSchema.builder()
-            .set_topic("saturated-pixels")
-            .set_value_serialization_schema(SimpleStringSchema())
-            .build()
+    redis_sink_q1 = RedisPublishMapFunction("saturated-pixels")
+    redis_sink_q2 = RedisPublishMapFunction("saturated-rank")
+    redis_sink_q3 = RedisPublishMapFunction("centroids")
+
+    csv_sink_q1 = FileSink.for_row_format(
+            output_path_q1,
+            Encoder.simple_string_encoder()
+        ).with_output_file_config(
+            OutputFileConfig.builder()
+                .with_part_prefix("part")
+                .with_part_suffix(".csv")
+                .build()
+        ).with_rolling_policy(
+            RollingPolicy.default_rolling_policy(
+                15 * 60 * 1000,  # rollover every 15 minutes
+                5 * 60 * 1000,  # if inactive for 5 minutes, close
+                128 * 1024 * 1024  # max 128 MB per file
+            )
         ).build()
 
-    kafka_sink_q2 = KafkaSink.builder() \
-        .set_bootstrap_servers("kafka:9092") \
-        .set_transactional_id_prefix("sink-saturated-rank") \
-        .set_record_serializer(
-            KafkaRecordSerializationSchema.builder()
-            .set_topic("saturated-rank")
-            .set_value_serialization_schema(SimpleStringSchema())
-            .build()
+    csv_sink_q2 = FileSink.for_row_format(
+            output_path_q2,
+            Encoder.simple_string_encoder()
+        ).with_output_file_config(
+            OutputFileConfig.builder()
+                .with_part_prefix("part")
+                .with_part_suffix(".csv")
+                .build()
+        ).with_rolling_policy(
+            RollingPolicy.default_rolling_policy(
+                15 * 60 * 1000,     # rollover every 15 minutes
+                5 * 60 * 1000,      # if inactive for 5 minutes, close
+                128 * 1024 * 1024   # max 128 MB per file
+            )
+        ).build()
+    csv_sink_q3 = FileSink.for_row_format(
+            output_path_q3,
+            Encoder.simple_string_encoder()
+        ).with_output_file_config(
+            OutputFileConfig.builder()
+                .with_part_prefix("part")
+                .with_part_suffix(".csv")
+                .build()
+        ).with_rolling_policy(
+            RollingPolicy.default_rolling_policy(
+                15 * 60 * 1000,  # rollover every 15 minutes
+                5 * 60 * 1000,  # if inactive for 5 minutes, close
+                128 * 1024 * 1024  # max 128 MB per file
+            )
         ).build()
 
     print("Creating data stream from source...")
@@ -145,28 +244,23 @@ def main():
     print("Detecting saturated pixels...")
 
     # Q1
-    saturated_ds = obj_ds.map(DetectSaturatedPixels(), output_type=Types.STRING())
-    saturated_ds \
-        .sink_to(kafka_sink_q1) \
-        .name("kafka-sink-saturated-pixels") \
-        .uid("sink-saturated-pixels") \
-        .set_parallelism(1)
-
-    print("Filtering outliers from images... (this may take a while)")
-
     # Data filtered (all outranged points are set to 0)
     filtered_ds = obj_ds.map(FilterPixels(), output_type=Types.ROW_NAMED(
-        ["print_id", "batch_id", "tile_id", "layer", "tif"],
+        ["print_id", "batch_id", "tile_id", "layer", "saturated_count", "tif"],
         [
             Types.STRING(),                      # print_id
             Types.INT(),                         # batch_id
             Types.INT(),                         # tile_id
             Types.INT(),                         # layer
+            Types.INT(),                         # saturated_count
             Types.PRIMITIVE_ARRAY(Types.BYTE())  # tif
         ]
     ))
+    q1_csv_data = filtered_ds.map(ExtractCSVFieldsQ1(), output_type=Types.STRING())
+    q1_csv_data.sink_to(csv_sink_q1).uid("csv-q1-sink")
 
-    print("Windowing data and computing outliers... (this may take a while)")
+    if REDIS:
+        q1_csv_data.map(redis_sink_q1, output_type=Types.STRING())
 
     # Q2
     keyed_windowed_ds = filtered_ds.key_by(lambda row: row.tile_id, key_type=Types.INT()).count_window(3, 1)
@@ -174,25 +268,85 @@ def main():
     outlier_points_ds = keyed_windowed_ds.process(
         TemperatureDeviation(),
         output_type=Types.ROW_NAMED(
-            ["print_id", "batch_id", "tile_id", "layers", "outlier_points"],
+            ["print_id", "batch_id", "tile_id", "layers", "saturated_count", "outlier_points"],
             [
-                Types.STRING(),
-                Types.INT(),
-                Types.INT(),
-                Types.LIST(Types.INT()),
-                Types.LIST(
+                Types.STRING(),             # print_id
+                Types.INT(),                # batch_id
+                Types.INT(),                # tile_id
+                Types.LIST(Types.INT()),    # layers
+                Types.INT(),                # saturated_count
+                Types.LIST(                 # outlier_points
                     Types.TUPLE([Types.INT(), Types.INT(), Types.FLOAT()])
                 )
             ]
         )
     )
 
-    ranked_outliers_ds = outlier_points_ds.map(OutlierRanker(), output_type=Types.STRING())
-    ranked_outliers_ds \
-        .sink_to(kafka_sink_q2) \
-        .name("kafka-sink-saturated-rank") \
-        .uid("sink-saturated-rank") \
-        .set_parallelism(1)
+    def debug_and_pass_q2(x):
+        print("[DEBUG]", str(x)[:100])
+        return ""
+
+    outlier_points_ds.map(
+        debug_and_pass_q2,
+        output_type=Types.STRING()
+    )
+
+    ranked_outliers_ds = outlier_points_ds.map(OutlierRanker(), output_type = Types.ROW_NAMED(
+        [
+            "seq_id", "print_id", "tile_id",
+            "p1_point", "dp1",
+            "p2_point", "dp2",
+            "p3_point", "dp3",
+            "p4_point", "dp4",
+            "p5_point", "dp5"
+        ],
+        [
+            Types.INT(), Types.STRING(), Types.INT(),
+            Types.TUPLE([Types.INT(), Types.INT()]), Types.FLOAT(),
+            Types.TUPLE([Types.INT(), Types.INT()]), Types.FLOAT(),
+            Types.TUPLE([Types.INT(), Types.INT()]), Types.FLOAT(),
+            Types.TUPLE([Types.INT(), Types.INT()]), Types.FLOAT(),
+            Types.TUPLE([Types.INT(), Types.INT()]), Types.FLOAT(),
+        ]
+    ))
+    q2_csv_data = ranked_outliers_ds.map(ExtractCSVFieldsQ2(), output_type=Types.STRING())
+    q2_csv_data.sink_to(csv_sink_q2).uid("csv-q2-sink")
+
+    if REDIS:
+        q2_csv_data.map(redis_sink_q2, output_type=Types.STRING())
+
+    # Q3
+    eps_value = 10
+    min_samples_value = 5
+
+    clustered_ds = outlier_points_ds.map(
+        OutlierClustering(eps=eps_value, min_samples=min_samples_value),
+        output_type=Types.ROW_NAMED(
+            ["seq_id", "print_id", "tile_id", "saturated", "centroids"],
+            [
+                Types.INT(),
+                Types.STRING(),
+                Types.INT(),
+                Types.INT(),
+                Types.LIST(Types.TUPLE([Types.INT(), Types.INT(), Types.INT()]))
+            ]
+        )
+    )
+
+    def debug_and_pass_q3(x):
+        print("[DEBUG]", str(x)[:100])
+        return ""
+
+    clustered_ds.map(
+        debug_and_pass_q3,
+        output_type=Types.STRING()
+    )
+
+    q3_csv_data = clustered_ds.map(ExtractCSVFieldsQ3(), output_type=Types.STRING())
+    q3_csv_data.sink_to(csv_sink_q3).uid("csv-q3-sink")
+
+    if REDIS:
+        q3_csv_data.map(redis_sink_q3, output_type=Types.STRING())
 
     print("Starting job execution...")
     env.execute("Flink 2.0 - Kafka MsgPack Consumer")

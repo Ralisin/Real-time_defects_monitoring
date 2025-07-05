@@ -12,37 +12,6 @@ VERBOSE = os.getenv("VERBOSE", "false").lower() in ("1", "true", "yes")
 EMPTY_THRESH = 5000
 SATURATION_THRESH = 65000
 
-class DetectSaturatedPixels(MapFunction):
-    def map(self, row):
-        print_id = row[0]
-        batch_id = row[1]
-        tile_id = row[2]
-        tif_bytes = row[4]
-
-        try:
-            image = Image.open(io.BytesIO(tif_bytes))
-            np_image = np.array(image)
-
-            saturated_count = np.sum(np_image > SATURATION_THRESH)
-
-            if VERBOSE:
-                print(f"Print_id: {print_id}, batch_id: {batch_id}, tile_id: {tile_id} Saturated pixels: {saturated_count}")
-
-            return json.dumps({
-                "seq_id": batch_id,
-                "print_id": print_id,
-                "tile_id": tile_id,
-                "saturated": int(saturated_count)
-            })
-        except Exception as e:
-            print(f"Error processing image: {e}")
-            return json.dumps({
-                "seq_id": batch_id,
-                "print_id": print_id,
-                "tile_id": tile_id,
-                "saturated": -1  # -1 indicates a processing error
-            })
-
 class FilterPixels(MapFunction):
     def map(self, row):
         print_id = row[0]
@@ -54,6 +23,8 @@ class FilterPixels(MapFunction):
         try:
             image = Image.open(io.BytesIO(tif_bytes))
             np_image = np.array(image)
+
+            saturated_count = np.sum(np_image > SATURATION_THRESH)
 
             mask = (EMPTY_THRESH <= np_image) & (np_image <= SATURATION_THRESH)
             filtered_np_image = np.where(mask, np_image, 0)
@@ -70,6 +41,7 @@ class FilterPixels(MapFunction):
                 batch_id=batch_id,
                 tile_id=tile_id,
                 layer=layer,
+                saturated_count=saturated_count,
                 tif=filtered_bytes
             )
         except Exception as e:
@@ -81,3 +53,7 @@ class FilterPixels(MapFunction):
                 layer=layer,
                 tif=tif_bytes
             )
+
+class ExtractCSVFieldsQ1(MapFunction):
+    def map(self, row):
+        return f"{row['batch_id']},{row['print_id']},{row['tile_id']},{row['saturated_count']}"

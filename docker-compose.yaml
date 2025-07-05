@@ -38,12 +38,16 @@ services:
       echo 'Creating topic raw-batch and results...' &&
       kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic raw-batch --partitions 1 --replication-factor 1 &&
       kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic results --partitions 1 --replication-factor 1 &&
-      echo 'Creating topic saturated-pixels...' &&
-      kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic saturated-pixels --partitions 1 --replication-factor 1 &&
-      echo 'Creating topic saturated-rank...' &&
-      kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic saturated-rank --partitions 1 --replication-factor 1
       echo 'DONE.'
       "
+    networks:
+      - flink-network
+
+  redis:
+    image: redis:7.0-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
     networks:
       - flink-network
 
@@ -64,6 +68,7 @@ services:
       - ./flink-python/flink_raw_batch_job.py:/opt/flink_job.py:ro
       - ./flink-python/Q1.py:/opt/Q1.py
       - ./flink-python/Q2.py:/opt/Q2.py
+      - ./flink-python/Q3.py:/opt/Q3.py
     networks:
       - flink-network
 
@@ -81,9 +86,12 @@ services:
         taskmanager.memory.process.size:8096mb
         taskmanager.memory.task.off-heap.size:1024mb
         taskmanager.memory.framework.off-heap.size:512mb
-      - VERBOSE=0
+      - VERBOSE=1
+      - REDIS=1
     networks:
       - flink-network
+    volumes:
+      - ./flink_output:/flink_output
     deploy:
       replicas: 1
 
