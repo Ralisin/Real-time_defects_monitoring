@@ -4,3 +4,4 @@ umsgpack~=0.1.0
 pillow~=11.2.1
 redis~=6.2.0
 scikit-learn~=1.7.0
+tifffile~=2025.5.10

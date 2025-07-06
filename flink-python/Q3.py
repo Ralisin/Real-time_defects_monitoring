@@ -59,7 +59,7 @@ class OutlierClustering(MapFunction):
                 cx, cy = cluster_points.mean(axis=0)
 
                 count = len(cluster_points)
-                centroids.append((int(cx), int(cy), count))
+                centroids.append((float(cx), float(cy), count))
 
                 print(f"centroid: ({cx}, {cy}), count: {count}")
 
@@ -85,15 +85,18 @@ class OutlierClustering(MapFunction):
 
 class ExtractCSVFieldsQ3(MapFunction):
     def map(self, row):
-        def centroid_to_str(centroid):
-            if centroid is None or centroid == (-1, -1, -1):
-                return "(-1;-1),-1"
+        def fix_centroid(c):
+            if c is None or c == (-1, -1, -1):
+                return {'x': -1, 'y': -1, 'count': -1}
             else:
-                x, y, count = centroid
-                return f"({x};{y}),{count}"
+                x, y, count = c
+                return {'x': float(x), 'y': float(y), 'count': int(count)}
+
+        centroids = [fix_centroid(c) for c in row['centroids']]
+        centroids_json = json.dumps(centroids)
 
         print(f"[ExtractCSVFieldsQ3] row: {row}")
 
-        csv_line = f"{row['seq_id']},{row['print_id']},{row['tile_id']},{row['saturated']},{row['centroids']}"
+        csv_line = f"{row['seq_id']},{row['print_id']},{row['tile_id']},{row['saturated']},{centroids_json}"
 
         return csv_line

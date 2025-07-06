@@ -1,9 +1,11 @@
 import io
-import json
 import numpy as np
 import os
 from PIL import Image
+import tifffile as tiff
 from typing import Iterable
+
+from scipy.ndimage import convolve
 
 from pyflink.common import Row
 from pyflink.datastream import ProcessWindowFunction, MapFunction
@@ -26,7 +28,7 @@ class TemperatureDeviation(ProcessWindowFunction):
             if VERBOSE:
                 print(f"[TemperatureDeviation] batch_id: {batch_id}, tile_id: {tile_id}, layers: {layers}")
 
-            image3d = np.stack([Image.open(io.BytesIO(e.tif)) for e in events], axis=0)
+            image3d = np.stack([tiff.imread(io.BytesIO(e.tif)) for e in events], axis=0)
 
             # Add padding of 0 layers, 2 points in height, and 2 points in width with NaN values
             image3d = image3d.astype(np.float32)
@@ -85,7 +87,86 @@ class TemperatureDeviation(ProcessWindowFunction):
 
             return [result_row]
         except Exception as e:
-            print(f"Error processing window: {e}")
+            print(f"[TemperatureDeviation] Error processing window: {e}")
+            return [
+                Row(
+                    print_id="",
+                    batch_id=-1,
+                    tile_id=-1,
+                    layers=[],
+                    saturated_count=-1,
+                    outlier_points=[]
+                )
+            ]
+
+class TemperatureDeviationConvolve(ProcessWindowFunction):
+    def process(self, key, context, elements: Iterable):
+        try:
+            events = list(elements)
+            events.sort(key=lambda e: e.layer)
+
+            print_id = events[0].print_id
+            batch_id = events[0].batch_id
+
+            tile_id = events[0].tile_id
+            saturated_count = events[0].saturated_count
+            layers = [int(e.layer) for e in events]
+
+            if VERBOSE:
+                print(f"[TemperatureDeviationConvolve] batch_id: {batch_id}, tile_id: {tile_id}, layers: {layers}")
+
+            image3d = np.stack([tiff.imread(io.BytesIO(e.tif)) for e in events], axis=0)
+            image3d = image3d.astype(np.float32)
+
+            # Add padding of 0 layers, 2 points in height, and 2 points in width with NaN values
+            image3d_padded = np.pad(image3d, ((0, 0), (2, 2), (2, 2)), mode='constant', constant_values=np.nan)
+
+            # Fixed masks
+            shape = (3, 5, 5)
+            center = (2, 2, 2)
+            l, x, y = np.indices(shape)
+            dist = np.abs(l - center[0]) + np.abs(x - center[1]) + np.abs(y - center[2])
+            mask_nearest = dist <= 2
+            mask_external = (dist > 2) & (dist <= 4)
+
+            top_layer_idx = image3d.shape[0] - 1
+            image_patch = image3d_padded[top_layer_idx - 2:top_layer_idx + 1]  # (3, H, W)
+
+            sum_nearest = convolve(np.nan_to_num(image_patch, nan=0.0), mask_nearest, mode='constant', cval=0.0)
+            sum_external = convolve(np.nan_to_num(image_patch, nan=0.0), mask_external, mode='constant', cval=0.0)
+
+            count_nearest = convolve(~np.isnan(image_patch), mask_nearest, mode='constant', cval=0.0)
+            count_external = convolve(~np.isnan(image_patch), mask_external, mode='constant', cval=0.0)
+
+            with np.errstate(divide='ignore', invalid='ignore'):
+                avg_nearest = sum_nearest / count_nearest
+                avg_external = sum_external / count_external
+
+            deviation = np.abs(avg_nearest - avg_external)
+            valid_mask = ~np.isnan(avg_nearest) & ~np.isnan(avg_external)
+            outlier_mask = (deviation > 6000) & valid_mask
+
+            x_coords, y_coords = np.where(outlier_mask[2])
+            outlier_points = [
+                (int(x), int(y), float(deviation[2, x, y]))
+                for x, y in zip(x_coords, y_coords)
+            ]
+
+            if VERBOSE:
+                print(f"[TemperatureDeviationConvolve] layers: {layers}, batch_id: {batch_id}, tile_id: {tile_id}, outlier_points len: {len(outlier_points)}")
+
+            result_row = Row(
+                print_id=print_id,
+                batch_id=batch_id,
+                tile_id=tile_id,
+                layers=layers,
+                saturated_count=saturated_count,
+                outlier_points=outlier_points
+            )
+
+            return [result_row]
+        except Exception as e:
+            print(f"[TemperatureDeviationConvolve] Error processing window: {e}")
             return [
                 Row(
                     print_id="",

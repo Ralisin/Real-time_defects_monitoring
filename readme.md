@@ -72,11 +72,15 @@ Saturated rank
 ```
 
 ```shell
-  flink run -p2 -pyFiles /opt/Q1.py,/opt/Q2.py,/opt/Q3.py -py /opt/flink_job.py
+  flink run -p 2 -pyFiles /opt/Q1.py,/opt/Q2.py,/opt/Q3.py -py /opt/flink_job.py
 ```
 
 ```shell
-  flink run -p4 -pyFiles /opt/Q1.py,/opt/Q2.py,/opt/Q3.py -py /opt/flink_job.py
+  flink run -p 4 -pyFiles /opt/Q1.py,/opt/Q2.py,/opt/Q3.py -py /opt/flink_job.py
+```
+
+```shell
+  flink run -p 8 -pyFiles /opt/Q1.py,/opt/Q2.py,/opt/Q3.py -py /opt/flink_job.py
 ```
 
 > ### Docker commands short-cut to read Kafka topic

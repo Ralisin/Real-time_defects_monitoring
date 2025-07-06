@@ -63,7 +63,9 @@ def main():
 
         # SEND RESULT
         logger.info(f"Sending batch result {i}")
+        logger.info(f"[POST] result: {result}")
         result_serialized = umsgpack.packb(result)  # Serialize the result
+        logger.info(f"[POST] result_serialized: {result_serialized}")
         result_response = session.post(
             f"{url}/api/result/0/{bench_id}/{i}",
             data=result_serialized

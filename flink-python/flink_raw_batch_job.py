@@ -113,13 +113,13 @@ class RedisPublishMapFunction(MapFunction):
             result = self.redis_client.publish(self.channel_name, str(value))
 
             if VERBOSE:
-                print(f"Published message to {self.channel_name}: {str(value)[:100]}...")
-                print(f"Number of subscribers: {result}")
+                print(f"[RedisPublishMapFunction] Published message to {self.channel_name}: {str(value)[:100]}...")
+                print(f"[RedisPublishMapFunction] Number of subscribers: {result}")
 
             return value
 
         except Exception as e:
-            print(f"Error publishing to Redis channel {self.channel_name}: {e}")
+            print(f"[RedisPublishMapFunction] Error publishing to Redis channel {self.channel_name}: {e}")
             # Tenta di riconnettersi
             try:
                 self.redis_client = redis.Redis(
@@ -130,15 +130,15 @@ class RedisPublishMapFunction(MapFunction):
                 )
                 self.redis_client.publish(self.channel_name, str(value))
             except Exception as reconnect_error:
-                print(f"Failed to reconnect and publish: {reconnect_error}")
+                print(f"[RedisPublishMapFunction] Failed to reconnect and publish: {reconnect_error}")
 
-            return value
+            return f"Error sending message to Redis: {str(value)[100]}"
 
     def close(self):
         """Chiude la connessione Redis"""
         if self.redis_client:
             self.redis_client.close()
-            print(f"Redis connection closed for channel: {self.channel_name}")
+            print(f"[RedisPublishMapFunction] Redis connection closed for channel: {self.channel_name}")
 
 def main():
     print("=== Starting Flink Kafka MsgPack Consumer ===")
@@ -169,51 +169,51 @@ def main():
     redis_sink_q3 = RedisPublishMapFunction("centroids")
 
     csv_sink_q1 = FileSink.for_row_format(
-            output_path_q1,
-            Encoder.simple_string_encoder()
-        ).with_output_file_config(
-            OutputFileConfig.builder()
-                .with_part_prefix("part")
-                .with_part_suffix(".csv")
-                .build()
-        ).with_rolling_policy(
-            RollingPolicy.default_rolling_policy(
-                15 * 60 * 1000,  # rollover every 15 minutes
-                5 * 60 * 1000,  # if inactive for 5 minutes, close
-                128 * 1024 * 1024  # max 128 MB per file
-            )
-        ).build()
+        output_path_q1,
+        Encoder.simple_string_encoder()
+    ).with_output_file_config(
+        OutputFileConfig.builder()
+        .with_part_prefix("part")
+        .with_part_suffix(".csv")
+        .build()
+    ).with_rolling_policy(
+        RollingPolicy.default_rolling_policy(
+            15 * 60 * 1000,  # rollover every 15 minutes
+            5 * 60 * 1000,  # if inactive for 5 minutes, close
+            128 * 1024 * 1024  # max 128 MB per file
+        )
+    ).build()
 
     csv_sink_q2 = FileSink.for_row_format(
-            output_path_q2,
-            Encoder.simple_string_encoder()
-        ).with_output_file_config(
-            OutputFileConfig.builder()
-                .with_part_prefix("part")
-                .with_part_suffix(".csv")
-                .build()
-        ).with_rolling_policy(
-            RollingPolicy.default_rolling_policy(
-                15 * 60 * 1000,     # rollover every 15 minutes
-                5 * 60 * 1000,      # if inactive for 5 minutes, close
-                128 * 1024 * 1024   # max 128 MB per file
-            )
-        ).build()
+        output_path_q2,
+        Encoder.simple_string_encoder()
+    ).with_output_file_config(
+        OutputFileConfig.builder()
+        .with_part_prefix("part")
+        .with_part_suffix(".csv")
+        .build()
+    ).with_rolling_policy(
+        RollingPolicy.default_rolling_policy(
+            15 * 60 * 1000,     # rollover every 15 minutes
+            5 * 60 * 1000,      # if inactive for 5 minutes, close
+            128 * 1024 * 1024   # max 128 MB per file
+        )
+    ).build()
     csv_sink_q3 = FileSink.for_row_format(
-            output_path_q3,
-            Encoder.simple_string_encoder()
-        ).with_output_file_config(
-            OutputFileConfig.builder()
-                .with_part_prefix("part")
-                .with_part_suffix(".csv")
-                .build()
-        ).with_rolling_policy(
-            RollingPolicy.default_rolling_policy(
-                15 * 60 * 1000,  # rollover every 15 minutes
-                5 * 60 * 1000,  # if inactive for 5 minutes, close
-                128 * 1024 * 1024  # max 128 MB per file
-            )
-        ).build()
+        output_path_q3,
+        Encoder.simple_string_encoder()
+    ).with_output_file_config(
+        OutputFileConfig.builder()
+        .with_part_prefix("part")
+        .with_part_suffix(".csv")
+        .build()
+    ).with_rolling_policy(
+        RollingPolicy.default_rolling_policy(
+            15 * 60 * 1000,  # rollover every 15 minutes
+            5 * 60 * 1000,  # if inactive for 5 minutes, close
+            128 * 1024 * 1024  # max 128 MB per file
+        )
+    ).build()
 
     print("Creating data stream from source...")
 
@@ -259,14 +259,30 @@ def main():
     q1_csv_data = filtered_ds.map(ExtractCSVFieldsQ1(), output_type=Types.STRING())
     q1_csv_data.sink_to(csv_sink_q1).uid("csv-q1-sink")
 
-    if REDIS:
-        q1_csv_data.map(redis_sink_q1, output_type=Types.STRING())
+    q1_csv_data.map(redis_sink_q1, output_type=Types.STRING())
 
     # Q2
     keyed_windowed_ds = filtered_ds.key_by(lambda row: row.tile_id, key_type=Types.INT()).count_window(3, 1)
 
+    # outlier_points_ds = keyed_windowed_ds.process(
+    #     TemperatureDeviation(),
+    #     output_type=Types.ROW_NAMED(
+    #         ["print_id", "batch_id", "tile_id", "layers", "saturated_count", "outlier_points"],
+    #         [
+    #             Types.STRING(),             # print_id
+    #             Types.INT(),                # batch_id
+    #             Types.INT(),                # tile_id
+    #             Types.LIST(Types.INT()),    # layers
+    #             Types.INT(),                # saturated_count
+    #             Types.LIST(                 # outlier_points
+    #                 Types.TUPLE([Types.INT(), Types.INT(), Types.FLOAT()])
+    #             )
+    #         ]
+    #     )
+    # )
+
     outlier_points_ds = keyed_windowed_ds.process(
-        TemperatureDeviation(),
+        TemperatureDeviationConvolve(),
         output_type=Types.ROW_NAMED(
             ["print_id", "batch_id", "tile_id", "layers", "saturated_count", "outlier_points"],
             [
@@ -282,14 +298,14 @@ def main():
         )
     )
 
-    def debug_and_pass_q2(x):
-        print("[DEBUG]", str(x)[:100])
-        return ""
-
-    outlier_points_ds.map(
-        debug_and_pass_q2,
-        output_type=Types.STRING()
-    )
+    # def debug_and_pass_q2(x):
+    #     print("[DEBUG]", str(x)[:100])
+    #     return ""
+    #
+    # outlier_points_ds.map(
+    #     debug_and_pass_q2,
+    #     output_type=Types.STRING()
+    # )
 
     ranked_outliers_ds = outlier_points_ds.map(OutlierRanker(), output_type = Types.ROW_NAMED(
         [
@@ -312,8 +328,7 @@ def main():
     q2_csv_data = ranked_outliers_ds.map(ExtractCSVFieldsQ2(), output_type=Types.STRING())
     q2_csv_data.sink_to(csv_sink_q2).uid("csv-q2-sink")
 
-    if REDIS:
-        q2_csv_data.map(redis_sink_q2, output_type=Types.STRING())
+    q2_csv_data.map(redis_sink_q2, output_type=Types.STRING())
 
     # Q3
     eps_value = 10
@@ -328,25 +343,24 @@ def main():
                 Types.STRING(),
                 Types.INT(),
                 Types.INT(),
-                Types.LIST(Types.TUPLE([Types.INT(), Types.INT(), Types.INT()]))
+                Types.LIST(Types.TUPLE([Types.FLOAT(), Types.FLOAT(), Types.INT()]))
             ]
         )
     )
 
-    def debug_and_pass_q3(x):
-        print("[DEBUG]", str(x)[:100])
-        return ""
-
-    clustered_ds.map(
-        debug_and_pass_q3,
-        output_type=Types.STRING()
-    )
+    # def debug_and_pass_q3(x):
+    #     print("[DEBUG]", str(x)[:100])
+    #     return ""
+    #
+    # clustered_ds.map(
+    #     debug_and_pass_q3,
+    #     output_type=Types.STRING()
+    # )
 
     q3_csv_data = clustered_ds.map(ExtractCSVFieldsQ3(), output_type=Types.STRING())
     q3_csv_data.sink_to(csv_sink_q3).uid("csv-q3-sink")
 
-    if REDIS:
-        q3_csv_data.map(redis_sink_q3, output_type=Types.STRING())
+    q3_csv_data.map(redis_sink_q3, output_type=Types.STRING())
 
     print("Starting job execution...")
     env.execute("Flink 2.0 - Kafka MsgPack Consumer")
