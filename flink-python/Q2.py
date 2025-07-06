@@ -1,49 +1,41 @@
 import io
 import numpy as np
 import os
-from PIL import Image
 import tifffile as tiff
 from typing import Iterable
 
-from scipy.ndimage import convolve
-
 from pyflink.common import Row
 from pyflink.datastream import ProcessWindowFunction, MapFunction
+from scipy.ndimage import convolve
 
 VERBOSE = os.getenv("VERBOSE", "false").lower() in ("1", "true", "yes")
 
 class TemperatureDeviation(ProcessWindowFunction):
+    def __init__(self):
+        shape = (3, 5, 5)
+        center = (2, 2, 2)
+        l, x, y = np.indices(shape)
+        dist = np.abs(l - center[0]) + np.abs(x - center[1]) + np.abs(y - center[2])
+        self.mask_nearest = dist <= 2
+        self.mask_external = (dist > 2) & (dist <= 4)
+
     def process(self, key, context, elements: Iterable):
         try:
             events = list(elements)
             events.sort(key=lambda e: e.layer)
 
-            print_id = events[0].print_id
-            batch_id = events[0].batch_id
+            print_id = events[2].print_id
+            batch_id = events[2].batch_id
 
-            tile_id = events[0].tile_id
-            saturated_count = events[0].saturated_count
+            tile_id = events[2].tile_id
+            saturated_count = events[2].saturated_count
             layers = [int(e.layer) for e in events]
-
-            if VERBOSE:
-                print(f"[TemperatureDeviation] batch_id: {batch_id}, tile_id: {tile_id}, layers: {layers}")
 
             image3d = np.stack([tiff.imread(io.BytesIO(e.tif)) for e in events], axis=0)
 
             # Add padding of 0 layers, 2 points in height, and 2 points in width with NaN values
             image3d = image3d.astype(np.float32)
             image3d_padded = np.pad(image3d, ((0, 0), (2, 2), (2, 2)), mode='constant', constant_values=np.nan)
-
-            # Fixed masks
-            shape = (3, 5, 5)
-            center = (2, 2, 2) # Last layer, in the middle
-
-            l, x, y = np.indices(shape)
-
-            dist = np.abs(l - center[0]) + np.abs(x - center[1]) + np.abs(y - center[2])
-
-            mask_nearest = dist <= 2
-            mask_external = (dist > 2) & (dist <= 4)
 
             top_layer_idx = image3d.shape[0] - 1
             height, width = image3d.shape[1], image3d.shape[2]
@@ -58,8 +50,8 @@ class TemperatureDeviation(ProcessWindowFunction):
                         y_p:y_p + 5
                     ]  # shape (3,5,5)
 
-                    local_neighbors = patch[mask_nearest]
-                    external_neighbors = patch[mask_external]
+                    local_neighbors = patch[self.mask_nearest]
+                    external_neighbors = patch[self.mask_external]
 
                     avg_local = np.nanmean(local_neighbors)
                     avg_external = np.nanmean(external_neighbors)
@@ -100,16 +92,24 @@ class TemperatureDeviation(ProcessWindowFunction):
             ]
 
 class TemperatureDeviationConvolve(ProcessWindowFunction):
+    def __init__(self):
+        shape = (3, 5, 5)
+        center = (2, 2, 2)
+        l, x, y = np.indices(shape)
+        dist = np.abs(l - center[0]) + np.abs(x - center[1]) + np.abs(y - center[2])
+        self.mask_nearest = dist <= 2
+        self.mask_external = (dist > 2) & (dist <= 4)
+
     def process(self, key, context, elements: Iterable):
         try:
             events = list(elements)
             events.sort(key=lambda e: e.layer)
 
-            print_id = events[0].print_id
-            batch_id = events[0].batch_id
+            print_id = events[2].print_id
+            batch_id = events[2].batch_id
 
-            tile_id = events[0].tile_id
-            saturated_count = events[0].saturated_count
+            tile_id = events[2].tile_id
+            saturated_count = events[2].saturated_count
             layers = [int(e.layer) for e in events]
 
             if VERBOSE:
@@ -121,22 +121,14 @@ class TemperatureDeviationConvolve(ProcessWindowFunction):
             # Add padding of 0 layers, 2 points in height, and 2 points in width with NaN values
             image3d_padded = np.pad(image3d, ((0, 0), (2, 2), (2, 2)), mode='constant', constant_values=np.nan)
 
-            # Fixed masks
-            shape = (3, 5, 5)
-            center = (2, 2, 2)
-            l, x, y = np.indices(shape)
-            dist = np.abs(l - center[0]) + np.abs(x - center[1]) + np.abs(y - center[2])
-            mask_nearest = dist <= 2
-            mask_external = (dist > 2) & (dist <= 4)
-
             top_layer_idx = image3d.shape[0] - 1
             image_patch = image3d_padded[top_layer_idx - 2:top_layer_idx + 1]  # (3, H, W)
 
-            sum_nearest = convolve(np.nan_to_num(image_patch, nan=0.0), mask_nearest, mode='constant', cval=0.0)
-            sum_external = convolve(np.nan_to_num(image_patch, nan=0.0), mask_external, mode='constant', cval=0.0)
+            sum_nearest = convolve(np.nan_to_num(image_patch, nan=0.0), self.mask_nearest, mode='constant', cval=0.0)
+            sum_external = convolve(np.nan_to_num(image_patch, nan=0.0), self.mask_external, mode='constant', cval=0.0)
 
-            count_nearest = convolve(~np.isnan(image_patch), mask_nearest, mode='constant', cval=0.0)
-            count_external = convolve(~np.isnan(image_patch), mask_external, mode='constant', cval=0.0)
+            count_nearest = convolve(~np.isnan(image_patch), self.mask_nearest, mode='constant', cval=0.0)
+            count_external = convolve(~np.isnan(image_patch), self.mask_external, mode='constant', cval=0.0)
 
             with np.errstate(divide='ignore', invalid='ignore'):
                 avg_nearest = sum_nearest / count_nearest
@@ -248,8 +240,6 @@ class ExtractCSVFieldsQ2(MapFunction):
             else:
                 return f"({point[0]};{point[1]})"
 
-        print(f"[ExtractCSVFieldsQ2] row: {row}")
-
         csv_line = (
             f"{row.seq_id},{row.print_id},{row.tile_id}," +
             f"{point_to_str(row.p1_point)},{row.dp1}," +
@@ -259,5 +249,4 @@ class ExtractCSVFieldsQ2(MapFunction):
             f"{point_to_str(row.p5_point)},{row.dp5}"
         )
 
-        print(f"[ExtractCSVFieldsQ2] csv_line: {csv_line}")
         return csv_line

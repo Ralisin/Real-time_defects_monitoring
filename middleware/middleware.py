@@ -24,7 +24,7 @@ counter_lock = threading.Lock()
 
 stop_event = threading.Event()
 
-def poll_batches(server_url, bench_id, kafka_bootstrap="kafka:9092", topic="raw-batch", interval=2, verbose=False):
+def poll_batches(server_url, bench_id, kafka_bootstrap="kafka:9092", topic="raw-batch", interval=0.2, verbose=False):
     logger = logging.getLogger("poll_batches")
 
     global get_count, no_more_batches
@@ -200,7 +200,7 @@ def consume_q2_redis(redis_host='redis', redis_port=6379, db=0, channel='saturat
         ])
 
     buffer = {}
-    next_expected_id = 0
+    next_expected_id = 32
 
     def flush_buffer():
         nonlocal next_expected_id
@@ -270,7 +270,7 @@ def consume_q3_redis(redis_host='redis', redis_port=6379, db=0, channel='centroi
         writer.writerow(['seq_id', 'print_id', 'tile_id', 'saturated', 'centroids'])
 
     buffer = {}
-    next_expected_id = 0
+    next_expected_id = 32
 
     def flush_buffer():
         global post_count
@@ -363,14 +363,17 @@ def create_and_start_benchmark(server_url, limit=None):
     start_resp.raise_for_status()
     return bench_id
 
-def watch_and_end(server_url, bench_id, check_interval=3):
+def watch_and_end(server_url, bench_id, limit = None, check_interval=3):
     global get_count, post_count, no_more_batches
     session = requests.Session()
     logger.info("Starting watcher thread to send/end")
 
     while not stop_event.is_set():
         with counter_lock:
-            if no_more_batches and get_count == post_count:
+            if limit:
+                if get_count == limit and post_count == limit - (16 * 2):
+                    break
+            if no_more_batches and get_count == 225 * 16 and post_count == (225 - 2) * 16:
                 break
         time.sleep(check_interval)
 
@@ -419,7 +422,7 @@ def main():
     q1_thread = threading.Thread(target=consume_q1_redis, kwargs={"verbose": args.verbose})
     q2_thread = threading.Thread(target=consume_q2_redis, kwargs={"verbose": args.verbose})
     q3_thread = threading.Thread(target=consume_q3_redis, kwargs={"bench_id": bench_id, "server_url": args.server_url, "verbose": args.verbose})
-    watcher_thread = threading.Thread(target=watch_and_end, args=(args.server_url, bench_id))
+    watcher_thread = threading.Thread(target=watch_and_end, args=(args.server_url, bench_id, args.limit))
 
     batch_thread.start()
     # kafka_thread.start()

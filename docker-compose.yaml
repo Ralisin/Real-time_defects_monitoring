@@ -82,18 +82,19 @@ services:
       - |
         FLINK_PROPERTIES=
         jobmanager.rpc.address:flink-jobmanager
-        taskmanager.numberOfTaskSlots:4
-        taskmanager.memory.process.size:4096mb
+        taskmanager.numberOfTaskSlots:16
+        taskmanager.memory.process.size:10g
+        taskmanager.memory.task.heap.size:7g
         taskmanager.memory.task.off-heap.size:512mb
-        taskmanager.memory.framework.off-heap.size:256mb
+        taskmanager.memory.framework.off-heap.size:512mb
+        taskmanager.memory.managed.size:256mb
       - VERBOSE=1
       - REDIS=1
     networks:
       - flink-network
     volumes:
       - ./flink_output:/flink_output
-    deploy:
-      replicas: 4
+    restart: unless-stopped
 
   middleware:
     build:
@@ -106,12 +107,13 @@ services:
       - local-challenger
     volumes:
       - ./middleware/middleware.py:/app/middleware.py
+      - ./middleware/results:/app/results
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
       - CHALLENGER_URL=http://local-challenger:8866
       - VERBOSE=1 # Add more middleware logs but increase middleware job weight
       - INTERVAL=1 # Time through every new message in the 'raw-batch' topic
-#      - LIMIT=20 # A limit can be set via environment
+      - LIMIT=500 # A limit can be set via environment
     networks:
       - flink-network
 

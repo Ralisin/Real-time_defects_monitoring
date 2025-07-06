@@ -76,6 +76,10 @@ Saturated rank
 ```
 
 ```shell
+  flink run -p 3 -pyFiles /opt/Q1.py,/opt/Q2.py,/opt/Q3.py -py /opt/flink_job.py
+```
+
+```shell
   flink run -p 4 -pyFiles /opt/Q1.py,/opt/Q2.py,/opt/Q3.py -py /opt/flink_job.py
 ```
 

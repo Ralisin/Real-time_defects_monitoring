@@ -150,8 +150,10 @@ def main():
     config.set_string("state.checkpoints.dir", "file:///tmp/flink-checkpoints")  # o HDFS
     env.configure(config)
 
+    env.get_config().enable_object_reuse()
+
     # env.set_parallelism(1)
-    env.enable_checkpointing(10000)
+    env.enable_checkpointing(5 * 60 * 1000) # Every 5 minutes
 
     print("Creating Kafka source with ByteArraySchema and Kafka Sinks...")
 
@@ -180,7 +182,7 @@ def main():
         RollingPolicy.default_rolling_policy(
             15 * 60 * 1000,  # rollover every 15 minutes
             5 * 60 * 1000,  # if inactive for 5 minutes, close
-            128 * 1024 * 1024  # max 128 MB per file
+            512 * 1024 * 1024  # max 512 MB per file
         )
     ).build()
 
@@ -196,7 +198,7 @@ def main():
         RollingPolicy.default_rolling_policy(
             15 * 60 * 1000,     # rollover every 15 minutes
             5 * 60 * 1000,      # if inactive for 5 minutes, close
-            128 * 1024 * 1024   # max 128 MB per file
+            512 * 1024 * 1024   # max 512 MB per file
         )
     ).build()
     csv_sink_q3 = FileSink.for_row_format(
@@ -211,7 +213,7 @@ def main():
         RollingPolicy.default_rolling_policy(
             15 * 60 * 1000,  # rollover every 15 minutes
             5 * 60 * 1000,  # if inactive for 5 minutes, close
-            128 * 1024 * 1024  # max 128 MB per file
+            512 * 1024 * 1024  # max 512 MB per file
         )
     ).build()
 
@@ -239,7 +241,7 @@ def main():
                 Types.PRIMITIVE_ARRAY(Types.BYTE())  # tif
             ]
         )
-    )
+    ).rebalance()
 
     print("Detecting saturated pixels...")
 
@@ -264,23 +266,6 @@ def main():
     # Q2
     keyed_windowed_ds = filtered_ds.key_by(lambda row: row.tile_id, key_type=Types.INT()).count_window(3, 1)
 
-    # outlier_points_ds = keyed_windowed_ds.process(
-    #     TemperatureDeviation(),
-    #     output_type=Types.ROW_NAMED(
-    #         ["print_id", "batch_id", "tile_id", "layers", "saturated_count", "outlier_points"],
-    #         [
-    #             Types.STRING(),             # print_id
-    #             Types.INT(),                # batch_id
-    #             Types.INT(),                # tile_id
-    #             Types.LIST(Types.INT()),    # layers
-    #             Types.INT(),                # saturated_count
-    #             Types.LIST(                 # outlier_points
-    #                 Types.TUPLE([Types.INT(), Types.INT(), Types.FLOAT()])
-    #             )
-    #         ]
-    #     )
-    # )
-
     outlier_points_ds = keyed_windowed_ds.process(
         TemperatureDeviationConvolve(),
         output_type=Types.ROW_NAMED(
@@ -297,15 +282,6 @@ def main():
             ]
         )
     )
-
-    # def debug_and_pass_q2(x):
-    #     print("[DEBUG]", str(x)[:100])
-    #     return ""
-    #
-    # outlier_points_ds.map(
-    #     debug_and_pass_q2,
-    #     output_type=Types.STRING()
-    # )
 
     ranked_outliers_ds = outlier_points_ds.map(OutlierRanker(), output_type = Types.ROW_NAMED(
         [
@@ -331,7 +307,7 @@ def main():
     q2_csv_data.map(redis_sink_q2, output_type=Types.STRING())
 
     # Q3
-    eps_value = 10
+    eps_value = 20
     min_samples_value = 5
 
     clustered_ds = outlier_points_ds.map(
@@ -347,15 +323,6 @@ def main():
             ]
         )
     )
-
-    # def debug_and_pass_q3(x):
-    #     print("[DEBUG]", str(x)[:100])
-    #     return ""
-    #
-    # clustered_ds.map(
-    #     debug_and_pass_q3,
-    #     output_type=Types.STRING()
-    # )
 
     q3_csv_data = clustered_ds.map(ExtractCSVFieldsQ3(), output_type=Types.STRING())
     q3_csv_data.sink_to(csv_sink_q3).uid("csv-q3-sink")
