@@ -13,7 +13,7 @@ from pyflink.datastream.connectors.kafka import (
     KafkaSource,
     KafkaOffsetsInitializer,
 )
-from pyflink.datastream.functions import MapFunction
+from pyflink.datastream.functions import MapFunction, Partitioner
 from pyflink.common.serialization import ByteArraySchema, Encoder
 from pyflink.common.typeinfo import Types
 
@@ -153,7 +153,7 @@ def main():
     env.get_config().enable_object_reuse()
 
     # env.set_parallelism(1)
-    env.enable_checkpointing(5 * 60 * 1000) # Every 5 minutes
+    env.enable_checkpointing(1 * 60 * 1000) # Every 1 minute
 
     print("Creating Kafka source with ByteArraySchema and Kafka Sinks...")
 
@@ -258,12 +258,21 @@ def main():
             Types.PRIMITIVE_ARRAY(Types.BYTE())  # tif
         ]
     ))
-    q1_csv_data = filtered_ds.map(ExtractCSVFieldsQ1(), output_type=Types.STRING())
-    q1_csv_data.sink_to(csv_sink_q1).uid("csv-q1-sink")
-
-    q1_csv_data.map(redis_sink_q1, output_type=Types.STRING())
+    # q1_csv_data = filtered_ds.map(ExtractCSVFieldsQ1(), output_type=Types.STRING())
+    # q1_csv_data.sink_to(csv_sink_q1).uid("csv-q1-sink")
+    #
+    # q1_csv_data.map(redis_sink_q1, output_type=Types.STRING())
 
     # Q2
+
+    # Test custom partitioning
+    class TilePartitioner(Partitioner):
+        def partition(self, key, num_partitions):
+            # Assumi che key sia tile_id numerico da 0 a 15
+            return key % num_partitions
+
+    filtered_ds = filtered_ds.partition_custom(TilePartitioner(), lambda row: row.tile_id)
+
     keyed_windowed_ds = filtered_ds.key_by(lambda row: row.tile_id, key_type=Types.INT()).count_window(3, 1)
 
     outlier_points_ds = keyed_windowed_ds.process(
@@ -283,28 +292,28 @@ def main():
         )
     )
 
-    ranked_outliers_ds = outlier_points_ds.map(OutlierRanker(), output_type = Types.ROW_NAMED(
-        [
-            "seq_id", "print_id", "tile_id",
-            "p1_point", "dp1",
-            "p2_point", "dp2",
-            "p3_point", "dp3",
-            "p4_point", "dp4",
-            "p5_point", "dp5"
-        ],
-        [
-            Types.INT(), Types.STRING(), Types.INT(),
-            Types.TUPLE([Types.INT(), Types.INT()]), Types.FLOAT(),
-            Types.TUPLE([Types.INT(), Types.INT()]), Types.FLOAT(),
-            Types.TUPLE([Types.INT(), Types.INT()]), Types.FLOAT(),
-            Types.TUPLE([Types.INT(), Types.INT()]), Types.FLOAT(),
-            Types.TUPLE([Types.INT(), Types.INT()]), Types.FLOAT(),
-        ]
-    ))
-    q2_csv_data = ranked_outliers_ds.map(ExtractCSVFieldsQ2(), output_type=Types.STRING())
-    q2_csv_data.sink_to(csv_sink_q2).uid("csv-q2-sink")
+    # ranked_outliers_ds = outlier_points_ds.map(OutlierRanker(), output_type = Types.ROW_NAMED(
+    #     [
+    #         "seq_id", "print_id", "tile_id",
+    #         "p1_point", "dp1",
+    #         "p2_point", "dp2",
+    #         "p3_point", "dp3",
+    #         "p4_point", "dp4",
+    #         "p5_point", "dp5"
+    #     ],
+    #     [
+    #         Types.INT(), Types.STRING(), Types.INT(),
+    #         Types.TUPLE([Types.INT(), Types.INT()]), Types.FLOAT(),
+    #         Types.TUPLE([Types.INT(), Types.INT()]), Types.FLOAT(),
+    #         Types.TUPLE([Types.INT(), Types.INT()]), Types.FLOAT(),
+    #         Types.TUPLE([Types.INT(), Types.INT()]), Types.FLOAT(),
+    #         Types.TUPLE([Types.INT(), Types.INT()]), Types.FLOAT(),
+    #     ]
+    # ))
+    # q2_csv_data = ranked_outliers_ds.map(ExtractCSVFieldsQ2(), output_type=Types.STRING())
+    # q2_csv_data.sink_to(csv_sink_q2).uid("csv-q2-sink")
 
-    q2_csv_data.map(redis_sink_q2, output_type=Types.STRING())
+    # q2_csv_data.map(redis_sink_q2, output_type=Types.STRING())
 
     # Q3
     eps_value = 20
@@ -325,7 +334,7 @@ def main():
     )
 
     q3_csv_data = clustered_ds.map(ExtractCSVFieldsQ3(), output_type=Types.STRING())
-    q3_csv_data.sink_to(csv_sink_q3).uid("csv-q3-sink")
+    # q3_csv_data.sink_to(csv_sink_q3).uid("csv-q3-sink")
 
     q3_csv_data.map(redis_sink_q3, output_type=Types.STRING())
 

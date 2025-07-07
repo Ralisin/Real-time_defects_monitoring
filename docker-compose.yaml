@@ -112,8 +112,9 @@ services:
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
       - CHALLENGER_URL=http://local-challenger:8866
       - VERBOSE=1 # Add more middleware logs but increase middleware job weight
-      - INTERVAL=1 # Time through every new message in the 'raw-batch' topic
-      - LIMIT=500 # A limit can be set via environment
+      - BURST_SIZE=16 # Number of batches sent before an interval
+      - INTERVAL=15 # Time through every new message in the 'raw-batch' topic
+#      - LIMIT=500 # A limit can be set via environment
     networks:
       - flink-network
 
