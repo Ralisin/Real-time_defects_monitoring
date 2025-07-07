@@ -337,7 +337,7 @@ def consume_q3_redis(
                             json=payload
                         )
                         resp.raise_for_status()
-                        logger.info(f"[consume_q3_redis] Posted result seq_id={seq_id} — Response: {resp.text}")
+                        logger.info(f"[consume_q3_redis - bench_id {bench_id}] Posted result seq_id={seq_id} — Response: {resp.text}")
                     except Exception as e:
                         logger.error(f"[consume_q3_redis] Failed to post seq_id={seq_id}: {e}")
 
@@ -388,13 +388,7 @@ def watch_and_end(server_url, bench_id, limit = None, check_interval=3):
     session = requests.Session()
     logger.info("Starting watcher thread to send/end")
 
-    while not stop_event.is_set():
-        with counter_lock:
-            if limit:
-                if get_count == limit and post_count == limit - (16 * 2):
-                    break
-            if no_more_batches and get_count == 225 * 16 and post_count == (225 - 2) * 16:
-                break
+    while not stop_event.is_set() or post_count < (3599 - 32):
         time.sleep(check_interval)
 
     try:
