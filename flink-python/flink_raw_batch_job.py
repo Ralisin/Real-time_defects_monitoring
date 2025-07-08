@@ -338,7 +338,7 @@ def main():
 
     q3_csv_data.map(redis_sink_q3, output_type=Types.STRING())
 
-    print("Starting job execution...")
+    print("Starting job execution..."
     env.execute("Flink 2.0 - Kafka MsgPack Consumer")
 
 

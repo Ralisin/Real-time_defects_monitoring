@@ -43,7 +43,7 @@ def poll_batches(
     )
 
     logger.info("Polling batch thread started")
-    while not stop_event.is_set():
+    while not stop_event.is_set() or no_more_batches is True:
         for i in range(burst_size):
             try:
                 response = session.get(f"{server_url}/api/next_batch/{bench_id}")
@@ -51,7 +51,7 @@ def poll_batches(
                     logger.info("No more batches available.")
                     with counter_lock:
                         no_more_batches = True
-                    return
+                    break
 
                 response.raise_for_status()
                 response_content = response.content
@@ -62,7 +62,7 @@ def poll_batches(
                     tile_id = batch["tile_id"]
                     batch_id = batch["batch_id"]
                     layer = batch["layer"]
-                    logger.info(f"[BATCH {batch_id}] Received from server | print={print_id} | layer={layer} | tile={tile_id}")
+                    logger.info(f"[BATCH {batch_id}] Received from server | print={print_id} | layer={layer} | tile={tile_id} | sleep_time: {interval} | burst_size: {burst_size}")
                 else:
                     logger.info(f"Received next batch from server.")
 
@@ -77,7 +77,6 @@ def poll_batches(
                 break
 
         time.sleep(interval)
-
 
 def consume_results(
     kafka_bootstrap="kafka:9092",
@@ -433,7 +432,7 @@ def main():
     bench_id = create_and_start_benchmark(args.server_url, limit=args.limit)
 
     # Step 2: Start threads
-    batch_thread = threading.Thread(target=poll_batches, args=(args.server_url, bench_id, args.kafka), kwargs={"burst_size": 16, "interval": args.interval, "verbose": args.verbose})
+    batch_thread = threading.Thread(target=poll_batches, args=(args.server_url, bench_id, args.kafka), kwargs={"burst_size": args.burst_size, "interval": args.interval, "verbose": args.verbose})
     # kafka_thread = threading.Thread(target=consume_results, args=(args.kafka, args.server_url))
     q1_thread = threading.Thread(target=consume_q1_redis, kwargs={"verbose": args.verbose})
     q2_thread = threading.Thread(target=consume_q2_redis, kwargs={"verbose": args.verbose})
