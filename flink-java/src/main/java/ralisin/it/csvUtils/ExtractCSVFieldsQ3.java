@@ -16,7 +16,34 @@ public class ExtractCSVFieldsQ3 implements MapFunction<ClusteredResult, String> 
     private static final ObjectMapper mapper = new ObjectMapper();
 
     @Override
-    public String map(ClusteredResult row) throws Exception {
+    public String map(ClusteredResult row) {
+        List<Map<String, Object>> centroidsJsonList = getMaps(row);
+
+        String centroidsJson;
+        try {
+            centroidsJson = mapper.writeValueAsString(centroidsJsonList);
+        } catch (JsonProcessingException e) {
+            centroidsJson = "[]";
+        }
+
+        System.out.printf("[ExtractCSVFieldsQ3] %d,%s,%d,%d,%s%n",
+            row.seqId,
+            row.printId,
+            row.tileId,
+            row.saturatedCount,
+            centroidsJson
+        );
+
+        return String.format("%d,%s,%d,%d,%s",
+                row.seqId,
+                row.printId,
+                row.tileId,
+                row.saturatedCount,
+                centroidsJson
+        );
+    }
+
+    private static List<Map<String, Object>> getMaps(ClusteredResult row) {
         List<Map<String, Object>> centroidsJsonList = new ArrayList<>();
 
         for (Centroid c : row.centroids) {
@@ -32,20 +59,6 @@ public class ExtractCSVFieldsQ3 implements MapFunction<ClusteredResult, String> 
             }
             centroidsJsonList.add(centroidMap);
         }
-
-        String centroidsJson;
-        try {
-            centroidsJson = mapper.writeValueAsString(centroidsJsonList);
-        } catch (JsonProcessingException e) {
-            centroidsJson = "[]"; // fallback in caso di errore serializzazione
-        }
-
-        return String.format("%d,%s,%d,%d,%s",
-                row.seqId,
-                row.printId,
-                row.tileId,
-                row.saturatedCount,
-                centroidsJson
-        );
+        return centroidsJsonList;
     }
 }

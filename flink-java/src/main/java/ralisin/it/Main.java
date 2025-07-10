@@ -43,10 +43,10 @@ public class Main {
                 .map(new FilterPixels())
                 .name("filter-pixels");
 
-        DataStream<String> q1CsvData = filteredQ1.map(new ExtractCSVFieldsQ1()).name("extract-csv-q1");
-        q1CsvData.map(redisSinkQ1).name("redis-sink-q1");
-
-        q1CsvData.print();
+//        DataStream<String> q1CsvData = filteredQ1.map(new ExtractCSVFieldsQ1()).name("extract-csv-q1");
+//        q1CsvData.map(redisSinkQ1).name("redis-sink-q1");
+//
+//        q1CsvData.print();
 
         var keyed = filteredQ1.keyBy(row -> row.tile_id);
         var windowed = keyed.countWindow(3, 1);
@@ -59,12 +59,12 @@ public class Main {
                 .map(new OutlierRanker())
                 .name("outlier-ranking");
 
-        SingleOutputStreamOperator<String> q2CsvData = rankedOutliers
-                .map(new ExtractCSVFieldsQ2())
-                .name("extract-csv-fields-q2");
-        q1CsvData.map(redisSinkQ2).name("redis-sink-q2");
-
-        q2CsvData.print();
+//        SingleOutputStreamOperator<String> q2CsvData = rankedOutliers
+//                .map(new ExtractCSVFieldsQ2())
+//                .name("extract-csv-fields-q2");
+//        q1CsvData.map(redisSinkQ2).name("redis-sink-q2");
+//
+//        q2CsvData.print();
 
         SingleOutputStreamOperator<ClusteredResult> clusteredResults = outlierPoints
                 .map(new OutlierClustering(20, 5))

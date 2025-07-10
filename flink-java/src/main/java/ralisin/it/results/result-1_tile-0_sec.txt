@@ -1,0 +1,11 @@
+{
+  "0": {
+    "count": 500,
+    "missing": 32,
+    "throughput": 2.09296091575916,
+    "latency_mean": "1m46s450ms778µs552ns",
+    "latency_min": "557ms405µs292ns",
+    "latency_max": "3m46s746ms917µs786ns",
+    "latency_p99": "0s"
+  }
+}
