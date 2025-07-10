@@ -69,6 +69,7 @@ services:
       - ./flink-python/Q1.py:/opt/Q1.py
       - ./flink-python/Q2.py:/opt/Q2.py
       - ./flink-python/Q3.py:/opt/Q3.py
+      - ./flink-java/target/flink-java-1.0-SNAPSHOT.jar:/opt/flink-java.jar
     networks:
       - flink-network
 
@@ -113,8 +114,8 @@ services:
       - CHALLENGER_URL=http://local-challenger:8866
       - VERBOSE=1 # Add more middleware logs but increase middleware job weight
       - BURST_SIZE=1 # Number of batches sent before an interval
-      - INTERVAL=1 # Time through every new message in the 'raw-batch' topic
-#      - LIMIT=500 # A limit can be set via environment
+      - INTERVAL=0 # Time through every new message in the 'raw-batch' topic
+      - LIMIT=500 # A limit can be set via environment
     networks:
       - flink-network
 
