@@ -51,7 +51,8 @@ def poll_batches(
                     logger.info("No more batches available.")
                     with counter_lock:
                         no_more_batches = True
-                    break
+
+                    return
 
                 response.raise_for_status()
                 response_content = response.content
